@@ -1,0 +1,28 @@
+{
+  "name": "omnichannel-inbox-automation",
+  "version": "1.0.0",
+  "private": true,
+  "description": "n8n workflows that route WhatsApp, Instagram and Telegram messages through one tested pipeline.",
+  "license": "MIT",
+  "author": "Oka Samdya Adabi",
+  "type": "commonjs",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "node scripts/build.js",
+    "build:check": "node scripts/build.js --check",
+    "validate": "node scripts/validate.js",
+    "test": "node --test",
+    "lint": "eslint . && prettier --check .",
+    "format": "prettier --write .",
+    "e2e": "node scripts/e2e.js"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.39.5",
+    "eslint": "^9.39.5",
+    "globals": "^17.13.0",
+    "mysql2": "^3.24.5",
+    "prettier": "^3.9.9"
+  }
+}
