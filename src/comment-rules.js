@@ -76,6 +76,7 @@ function planComment(comment, { priceListUrl, hourlyCap, now = new Date() }) {
     comment_id: comment.comment_id,
     category,
     matched,
+    reasons: [category === 'other' ? 'no_rule_matched' : `rule_${category}`],
     claim: buildClaimRow({
       channel: 'instagram_comment',
       external_message_id: comment.comment_id,

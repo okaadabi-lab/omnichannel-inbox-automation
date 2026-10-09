@@ -61,6 +61,7 @@ test('the hourly counter is keyed by account and UTC hour', () => {
 test('spam gets no replies but is still logged through the claim row', () => {
   const plan = planComment(spamComment, options);
   assert.equal(plan.category, 'spam');
+  assert.deepEqual(plan.reasons, ['rule_spam']);
   assert.equal(plan.public_reply, null);
   assert.equal(plan.private_reply, null);
   assert.deepEqual(plan.claim, {

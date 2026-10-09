@@ -1,0 +1,674 @@
+{
+  "id": "oiaPayslipNotify",
+  "name": "payslip-notifications",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 15
+            }
+          ]
+        }
+      },
+      "id": "f32b02fe-3852-4514-afb0-0577d4db1db9",
+      "name": "Every 15 Minutes",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        200
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "8cc42f05-f0a9-4945-a966-782abf744a84",
+      "name": "Run Manually",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "http://host.docker.internal:8082/api/v1/integrations/outbox",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "after",
+              "value": "0"
+            },
+            {
+              "name": "limit",
+              "value": "50"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 15000,
+          "pagination": {
+            "pagination": {
+              "paginationMode": "updateAParameterInEachRequest",
+              "parameters": {
+                "parameters": [
+                  {
+                    "type": "qs",
+                    "name": "after",
+                    "value": "={{ $response.body.meta.next_after }}"
+                  }
+                ]
+              },
+              "paginationCompleteWhen": "other",
+              "completeExpression": "={{ $response.body.data.length < 50 }}",
+              "limitPagesFetched": true,
+              "maxRequests": 20
+            }
+          }
+        }
+      },
+      "id": "90c721d6-64c2-4b86-a70d-63c8641f3fa2",
+      "name": "Fetch Outbox",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        240,
+        300
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": null,
+          "name": "HR Payroll API"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000
+    },
+    {
+      "parameters": {
+        "jsCode": "// Built by scripts/build.js from workflows/code/payslip-notifications/collect-events.js and src/. Edit those files, not this node.\n\nconst __modules = {\n  'outbox': function (module, exports, require) {\n'use strict';\n\nconst { buildWhatsAppTemplate } = require('./senders');\nconst { asArray, truncate } = require('./text');\n\nconst ACK_BATCH_SIZE = 100;\nconst PHONE_PATTERN = /^\\+?[1-9]\\d{7,14}$/;\nconst PERIOD_PATTERN = /^(\\d{4})-(0[1-9]|1[0-2])$/;\nconst MONTHS_ID = [\n  'Januari',\n  'Februari',\n  'Maret',\n  'April',\n  'Mei',\n  'Juni',\n  'Juli',\n  'Agustus',\n  'September',\n  'Oktober',\n  'November',\n  'Desember',\n];\n// Statuses after which an event is only acknowledged again, never re-sent.\nconst FINAL_STATUSES = ['delivered', 'undeliverable', 'gave_up', 'skipped'];\n\nfunction formatRupiah(amount) {\n  return `Rp ${String(amount).replace(/\\B(?=(\\d{3})+(?!\\d))/g, '.')}`;\n}\n\nfunction periodLabel(period) {\n  const match = PERIOD_PATTERN.exec(period);\n  return `${MONTHS_ID[Number(match[2]) - 1]} ${match[1]}`;\n}\n\n// The two event types from hr-payroll-api and how each becomes a WhatsApp template message.\nconst EVENT_TYPES = {\n  'payslip.published': {\n    templateKey: 'payslipPublished',\n    validate: (p) => typeof p.payslip_url === 'string' && p.payslip_url.length > 0,\n    parameters: (p) => [p.employee_name, periodLabel(p.period), p.payslip_url],\n  },\n  'payroll.paid': {\n    templateKey: 'payrollPaid',\n    validate: (p) => Number.isInteger(p.net_pay) && p.net_pay >= 0,\n    parameters: (p) => [p.employee_name, periodLabel(p.period), formatRupiah(p.net_pay)],\n  },\n};\n\n// Flattens the pages returned by GET /api/v1/integrations/outbox. Delivery is at least once,\n// so the same id can appear twice; the first copy wins.\nfunction collectOutboxEvents(pages) {\n  const byId = new Map();\n  for (const page of asArray(pages)) {\n    if (!page || !Array.isArray(page.data)) {\n      throw new Error('Outbox response has no \"data\" array; the hr-payroll-api contract changed');\n    }\n    for (const event of page.data) {\n      if (!Number.isInteger(event?.id) || event.id < 1) {\n        throw new Error(`Outbox event has an invalid id: ${JSON.stringify(event?.id)}`);\n      }\n      if (!byId.has(event.id)) byId.set(event.id, event);\n    }\n  }\n  return [...byId.values()].sort((a, b) => a.id - b.id);\n}\n\nfunction payloadProblem(event, type) {\n  const payload = event.payload;\n  if (!payload || typeof payload !== 'object') return 'payload missing';\n  if (typeof payload.employee_name !== 'string' || payload.employee_name.trim() === '') {\n    return 'employee_name missing';\n  }\n  if (typeof payload.period !== 'string' || !PERIOD_PATTERN.test(payload.period)) {\n    return 'period is not YYYY-MM';\n  }\n  if (!type.validate(payload)) return `payload incomplete for ${event.type}`;\n  if (payload.phone === null || payload.phone === undefined) return 'employee has no phone number';\n  if (\n    typeof payload.phone !== 'string' ||\n    !PHONE_PATTERN.test(payload.phone.replace(/[\\s-]/g, ''))\n  ) {\n    return 'phone number is not a valid international number';\n  }\n  return null;\n}\n\nfunction renderOpsAlert(event, reason, attempts) {\n  const payload = event.payload ?? {};\n  return [\n    'Payroll notification needs attention',\n    `Event: #${event.id} ${event.type}`,\n    `Employee: ${payload.employee_name ?? 'unknown'} (id ${payload.employee_id ?? 'unknown'})`,\n    `Period: ${payload.period ?? 'unknown'}`,\n    `Reason: ${reason}`,\n    `Attempts: ${attempts}`,\n    'The event has been acknowledged in hr-payroll-api. Please notify the employee manually.',\n  ].join('\\n');\n}\n\nfunction finalOutcome(event, status, reason, attempts, alert) {\n  return {\n    event_id: event.id,\n    status,\n    last_error: reason ? truncate(reason, 500) : null,\n    provider_message_id: null,\n    ack: true,\n    alert_text: alert ? renderOpsAlert(event, reason, attempts) : null,\n  };\n}\n\n// Decides what to do with one outbox event, given its row in outbox_delivery_attempts:\n// - send: deliver a WhatsApp template (send_request), evaluated afterwards\n// - finalize: record a terminal status, alert ops if needed, then acknowledge\n// - ack_only: already handled in an earlier run whose acknowledgement did not go through\nfunction planOutboxDelivery(event, state, { maxAttempts, templates }) {\n  const attempts = Number(state?.attempts ?? 0);\n  if (FINAL_STATUSES.includes(state?.status)) {\n    return { action: 'ack_only', event_id: event.id, ack: true };\n  }\n\n  const type = EVENT_TYPES[event.type];\n  if (!type) {\n    const reason = `unsupported event type ${String(event.type)}`;\n    return { action: 'finalize', ...finalOutcome(event, 'skipped', reason, attempts, false) };\n  }\n\n  const problem = payloadProblem(event, type);\n  if (problem) {\n    return { action: 'finalize', ...finalOutcome(event, 'undeliverable', problem, attempts, true) };\n  }\n  if (attempts >= maxAttempts) {\n    const reason = 'maximum attempts reached';\n    return { action: 'finalize', ...finalOutcome(event, 'gave_up', reason, attempts, true) };\n  }\n\n  const to = event.payload.phone.replace(/[^\\d]/g, '');\n  return {\n    action: 'send',\n    event,\n    attempts,\n    send_request: buildWhatsAppTemplate(\n      to,\n      templates[type.templateKey],\n      type.parameters(event.payload),\n    ),\n  };\n}\n\n// n8n reports HTTP failures as '500 - \"<response body as a JSON string>\"'. Graph API bodies\n// look like {\"error\":{\"message\":...}}, so the provider's own message is pulled out when possible.\nfunction providerMessage(message) {\n  const match = /^\\d{3} - \"(.*)\"$/s.exec(message);\n  if (!match) return message;\n  try {\n    const body = JSON.parse(JSON.parse(`\"${match[1]}\"`));\n    return body?.error?.message ?? message;\n  } catch {\n    return message;\n  }\n}\n\nfunction describeSendError(response) {\n  const error = response?.error;\n  if (!error) return 'provider response has no message id';\n  if (typeof error === 'string') return error;\n  const status = error.httpCode ?? error.status ?? error.statusCode;\n  const message = providerMessage(String(error.message ?? error.description ?? 'request failed'));\n  return status ? `HTTP ${status}: ${message}` : message;\n}\n\n// Interprets the WhatsApp send result for one planned event. Failures stay unacked so the next\n// run retries them, until the attempt that reaches maxAttempts turns into an ops alert.\nfunction evaluateDelivery(plan, response, { maxAttempts }) {\n  const attempts = plan.attempts + 1;\n  const messageId = response?.messages?.[0]?.id;\n  if (typeof messageId === 'string' && messageId.length > 0) {\n    return {\n      event_id: plan.event.id,\n      status: 'delivered',\n      last_error: null,\n      provider_message_id: messageId,\n      ack: true,\n      alert_text: null,\n    };\n  }\n\n  const reason = describeSendError(response);\n  if (attempts >= maxAttempts) {\n    return finalOutcome(plan.event, 'gave_up', reason, attempts, true);\n  }\n  return {\n    event_id: plan.event.id,\n    status: 'failed',\n    last_error: truncate(reason, 500),\n    provider_message_id: null,\n    ack: false,\n    alert_text: null,\n  };\n}\n\nfunction buildAckBatches(outcomes) {\n  const ids = [...new Set(outcomes.filter((o) => o.ack).map((o) => o.event_id))];\n  const batches = [];\n  for (let i = 0; i < ids.length; i += ACK_BATCH_SIZE) {\n    batches.push({ ids: ids.slice(i, i + ACK_BATCH_SIZE) });\n  }\n  return batches;\n}\n\nmodule.exports = {\n  formatRupiah,\n  periodLabel,\n  collectOutboxEvents,\n  planOutboxDelivery,\n  evaluateDelivery,\n  buildAckBatches,\n};\n  },\n  'senders': function (module, exports, require) {\n'use strict';\n\nconst { truncate, truncateUtf8, singleLine } = require('./text');\n\nconst WHATSAPP_TEXT_LIMIT = 4096;\nconst INSTAGRAM_TEXT_BYTES = 1000;\nconst TELEGRAM_TEXT_LIMIT = 4096;\nconst TEMPLATE_PARAM_LIMIT = 1024;\n\nfunction requireText(text) {\n  if (typeof text !== 'string' || text.trim().length === 0) {\n    throw new Error('Outgoing message text must be a non-empty string');\n  }\n  return text.trim();\n}\n\n// WhatsApp Cloud API POST /{phone-number-id}/messages, free-form text. Only allowed inside\n// the 24-hour customer service window, which is always the case when replying to a message.\nfunction buildWhatsAppText(to, text) {\n  return {\n    messaging_product: 'whatsapp',\n    recipient_type: 'individual',\n    to,\n    type: 'text',\n    text: { preview_url: false, body: truncate(requireText(text), WHATSAPP_TEXT_LIMIT) },\n  };\n}\n\n// Business-initiated messages (outside the 24-hour window) must use a template that Meta has\n// approved. Template text parameters may not contain newlines, tabs or long runs of spaces.\nfunction buildWhatsAppTemplate(to, template, bodyParameters) {\n  if (!template?.name || !template?.language) {\n    throw new Error('WhatsApp template needs a name and a language code');\n  }\n  return {\n    messaging_product: 'whatsapp',\n    recipient_type: 'individual',\n    to,\n    type: 'template',\n    template: {\n      name: template.name,\n      language: { code: template.language },\n      components: [\n        {\n          type: 'body',\n          parameters: bodyParameters.map((value) => ({\n            type: 'text',\n            text: truncate(singleLine(requireText(String(value))), TEMPLATE_PARAM_LIMIT),\n          })),\n        },\n      ],\n    },\n  };\n}\n\n// Instagram API with Instagram Login, POST /{ig-id}/messages. Text is limited to 1000 bytes.\nfunction buildInstagramText(recipientId, text) {\n  return {\n    recipient: { id: recipientId },\n    message: { text: truncateUtf8(requireText(text), INSTAGRAM_TEXT_BYTES) },\n  };\n}\n\n// Private reply: a DM addressed by comment id. Meta allows one per comment, within 7 days.\nfunction buildInstagramPrivateReply(commentId, text) {\n  return {\n    recipient: { comment_id: commentId },\n    message: { text: truncateUtf8(requireText(text), INSTAGRAM_TEXT_BYTES) },\n  };\n}\n\n// Public reply: POST /{ig-comment-id}/replies.\nfunction buildInstagramPublicReply(text) {\n  return { message: truncateUtf8(requireText(text), INSTAGRAM_TEXT_BYTES) };\n}\n\nfunction buildTelegramText(chatId, text) {\n  return { chat_id: String(chatId), text: truncate(requireText(text), TELEGRAM_TEXT_LIMIT) };\n}\n\n// One channel-neutral description of \"send this text back to the customer\", consumed by the\n// per-channel send nodes. path_id is the id that goes into the Graph API URL.\nfunction buildReply(message, text) {\n  const target = message.reply_target;\n  switch (message.channel) {\n    case 'whatsapp':\n      return {\n        channel: 'whatsapp',\n        path_id: target.phone_number_id,\n        body: buildWhatsAppText(target.to, text),\n      };\n    case 'instagram':\n      return {\n        channel: 'instagram',\n        path_id: target.account_id,\n        body: buildInstagramText(target.recipient_id, text),\n      };\n    case 'telegram':\n      return { channel: 'telegram', ...buildTelegramText(target.chat_id, text) };\n    default:\n      throw new Error(`No sender for channel \"${String(message.channel)}\"`);\n  }\n}\n\nmodule.exports = {\n  buildWhatsAppText,\n  buildWhatsAppTemplate,\n  buildInstagramText,\n  buildInstagramPrivateReply,\n  buildInstagramPublicReply,\n  buildTelegramText,\n  buildReply,\n};\n  },\n  'text': function (module, exports, require) {\n'use strict';\n\nfunction asArray(value) {\n  return Array.isArray(value) ? value : [];\n}\n\nfunction cleanText(value) {\n  if (typeof value !== 'string') return '';\n  return value.replace(/\\r\\n?/g, '\\n').trim();\n}\n\nfunction isHighSurrogate(code) {\n  return code >= 0xd800 && code <= 0xdbff;\n}\n\n// Limits are counted in UTF-16 code units (JavaScript string length), which is what the\n// downstream APIs validate. The cut never splits a surrogate pair.\nfunction truncate(text, maxLength) {\n  if (text.length <= maxLength) return text;\n  let end = maxLength - 1;\n  if (isHighSurrogate(text.charCodeAt(end - 1))) end -= 1;\n  return `${text.slice(0, end)}…`;\n}\n\nfunction utf8ByteLength(codePoint) {\n  if (codePoint < 0x80) return 1;\n  if (codePoint < 0x800) return 2;\n  if (codePoint < 0x10000) return 3;\n  return 4;\n}\n\n// Instagram limits message text to 1000 bytes of UTF-8, not characters.\nfunction truncateUtf8(text, maxBytes) {\n  const ellipsisBytes = 3;\n  let total = 0;\n  for (const char of text) total += utf8ByteLength(char.codePointAt(0));\n  if (total <= maxBytes) return text;\n\n  let kept = '';\n  let used = 0;\n  for (const char of text) {\n    const size = utf8ByteLength(char.codePointAt(0));\n    if (used + size > maxBytes - ellipsisBytes) break;\n    kept += char;\n    used += size;\n  }\n  return `${kept}…`;\n}\n\n// Meta sends seconds in some payloads and milliseconds in others; anything above 1e12 is\n// treated as milliseconds (1e12 seconds is the year 33658).\nfunction unixToIso(value) {\n  const number = typeof value === 'string' ? Number(value) : value;\n  if (typeof number !== 'number' || !Number.isFinite(number) || number <= 0) return null;\n  const millis = number > 1e12 ? number : number * 1000;\n  return new Date(millis).toISOString();\n}\n\nfunction toMysqlDateTime(value) {\n  const date = value instanceof Date ? value : new Date(value);\n  if (Number.isNaN(date.getTime())) {\n    throw new Error(`Invalid date: ${String(value)}`);\n  }\n  return date.toISOString().replace('T', ' ').replace('Z', '');\n}\n\nfunction singleLine(text) {\n  return text.replace(/\\s+/g, ' ').trim();\n}\n\nmodule.exports = {\n  asArray,\n  cleanText,\n  truncate,\n  truncateUtf8,\n  unixToIso,\n  toMysqlDateTime,\n  singleLine,\n};\n  },\n};\n\nconst __cache = {};\nfunction __require(name) {\n  const key = name.replace(/^\\.\\//, '');\n  if (!__cache[key]) {\n    const module = { exports: {} };\n    __cache[key] = module;\n    __modules[key](module, module.exports, __require);\n  }\n  return __cache[key].exports;\n}\n\nconst { collectOutboxEvents } = __require('outbox');\n\nreturn collectOutboxEvents($input.all().map((item) => item.json)).map((event) => ({ json: event }));\n"
+      },
+      "id": "b27f62e0-bd2c-459e-ae88-a90839215b45",
+      "name": "Collect Events",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        480,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO outbox_delivery_attempts (event_id, event_type, employee_id) VALUES ($1, $2, $3) ON DUPLICATE KEY UPDATE event_id = event_id;\nSELECT event_id, attempts, status FROM outbox_delivery_attempts WHERE event_id = $4",
+        "options": {
+          "queryBatching": "independently",
+          "queryReplacement": "={{ [$json.id, $json.type, $json.payload?.employee_id ?? null, $json.id] }}"
+        }
+      },
+      "id": "650d4f7e-fe8b-47b1-a176-56055faa103a",
+      "name": "Register Events",
+      "type": "n8n-nodes-base.mySql",
+      "typeVersion": 2.5,
+      "position": [
+        720,
+        300
+      ],
+      "credentials": {
+        "mySql": {
+          "id": null,
+          "name": "Inbox MySQL"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// Built by scripts/build.js from workflows/code/payslip-notifications/plan-deliveries.js and src/. Edit those files, not this node.\n\nconst CONFIG = Object.freeze({\n  \"OUTBOX_MAX_ATTEMPTS\": 5,\n  \"PAYROLL_PAID_TEMPLATE_NAME\": \"salary_paid\",\n  \"PAYSLIP_TEMPLATE_NAME\": \"payslip_ready\",\n  \"WHATSAPP_TEMPLATE_LANGUAGE\": \"id\"\n});\n\nconst __modules = {\n  'outbox': function (module, exports, require) {\n'use strict';\n\nconst { buildWhatsAppTemplate } = require('./senders');\nconst { asArray, truncate } = require('./text');\n\nconst ACK_BATCH_SIZE = 100;\nconst PHONE_PATTERN = /^\\+?[1-9]\\d{7,14}$/;\nconst PERIOD_PATTERN = /^(\\d{4})-(0[1-9]|1[0-2])$/;\nconst MONTHS_ID = [\n  'Januari',\n  'Februari',\n  'Maret',\n  'April',\n  'Mei',\n  'Juni',\n  'Juli',\n  'Agustus',\n  'September',\n  'Oktober',\n  'November',\n  'Desember',\n];\n// Statuses after which an event is only acknowledged again, never re-sent.\nconst FINAL_STATUSES = ['delivered', 'undeliverable', 'gave_up', 'skipped'];\n\nfunction formatRupiah(amount) {\n  return `Rp ${String(amount).replace(/\\B(?=(\\d{3})+(?!\\d))/g, '.')}`;\n}\n\nfunction periodLabel(period) {\n  const match = PERIOD_PATTERN.exec(period);\n  return `${MONTHS_ID[Number(match[2]) - 1]} ${match[1]}`;\n}\n\n// The two event types from hr-payroll-api and how each becomes a WhatsApp template message.\nconst EVENT_TYPES = {\n  'payslip.published': {\n    templateKey: 'payslipPublished',\n    validate: (p) => typeof p.payslip_url === 'string' && p.payslip_url.length > 0,\n    parameters: (p) => [p.employee_name, periodLabel(p.period), p.payslip_url],\n  },\n  'payroll.paid': {\n    templateKey: 'payrollPaid',\n    validate: (p) => Number.isInteger(p.net_pay) && p.net_pay >= 0,\n    parameters: (p) => [p.employee_name, periodLabel(p.period), formatRupiah(p.net_pay)],\n  },\n};\n\n// Flattens the pages returned by GET /api/v1/integrations/outbox. Delivery is at least once,\n// so the same id can appear twice; the first copy wins.\nfunction collectOutboxEvents(pages) {\n  const byId = new Map();\n  for (const page of asArray(pages)) {\n    if (!page || !Array.isArray(page.data)) {\n      throw new Error('Outbox response has no \"data\" array; the hr-payroll-api contract changed');\n    }\n    for (const event of page.data) {\n      if (!Number.isInteger(event?.id) || event.id < 1) {\n        throw new Error(`Outbox event has an invalid id: ${JSON.stringify(event?.id)}`);\n      }\n      if (!byId.has(event.id)) byId.set(event.id, event);\n    }\n  }\n  return [...byId.values()].sort((a, b) => a.id - b.id);\n}\n\nfunction payloadProblem(event, type) {\n  const payload = event.payload;\n  if (!payload || typeof payload !== 'object') return 'payload missing';\n  if (typeof payload.employee_name !== 'string' || payload.employee_name.trim() === '') {\n    return 'employee_name missing';\n  }\n  if (typeof payload.period !== 'string' || !PERIOD_PATTERN.test(payload.period)) {\n    return 'period is not YYYY-MM';\n  }\n  if (!type.validate(payload)) return `payload incomplete for ${event.type}`;\n  if (payload.phone === null || payload.phone === undefined) return 'employee has no phone number';\n  if (\n    typeof payload.phone !== 'string' ||\n    !PHONE_PATTERN.test(payload.phone.replace(/[\\s-]/g, ''))\n  ) {\n    return 'phone number is not a valid international number';\n  }\n  return null;\n}\n\nfunction renderOpsAlert(event, reason, attempts) {\n  const payload = event.payload ?? {};\n  return [\n    'Payroll notification needs attention',\n    `Event: #${event.id} ${event.type}`,\n    `Employee: ${payload.employee_name ?? 'unknown'} (id ${payload.employee_id ?? 'unknown'})`,\n    `Period: ${payload.period ?? 'unknown'}`,\n    `Reason: ${reason}`,\n    `Attempts: ${attempts}`,\n    'The event has been acknowledged in hr-payroll-api. Please notify the employee manually.',\n  ].join('\\n');\n}\n\nfunction finalOutcome(event, status, reason, attempts, alert) {\n  return {\n    event_id: event.id,\n    status,\n    last_error: reason ? truncate(reason, 500) : null,\n    provider_message_id: null,\n    ack: true,\n    alert_text: alert ? renderOpsAlert(event, reason, attempts) : null,\n  };\n}\n\n// Decides what to do with one outbox event, given its row in outbox_delivery_attempts:\n// - send: deliver a WhatsApp template (send_request), evaluated afterwards\n// - finalize: record a terminal status, alert ops if needed, then acknowledge\n// - ack_only: already handled in an earlier run whose acknowledgement did not go through\nfunction planOutboxDelivery(event, state, { maxAttempts, templates }) {\n  const attempts = Number(state?.attempts ?? 0);\n  if (FINAL_STATUSES.includes(state?.status)) {\n    return { action: 'ack_only', event_id: event.id, ack: true };\n  }\n\n  const type = EVENT_TYPES[event.type];\n  if (!type) {\n    const reason = `unsupported event type ${String(event.type)}`;\n    return { action: 'finalize', ...finalOutcome(event, 'skipped', reason, attempts, false) };\n  }\n\n  const problem = payloadProblem(event, type);\n  if (problem) {\n    return { action: 'finalize', ...finalOutcome(event, 'undeliverable', problem, attempts, true) };\n  }\n  if (attempts >= maxAttempts) {\n    const reason = 'maximum attempts reached';\n    return { action: 'finalize', ...finalOutcome(event, 'gave_up', reason, attempts, true) };\n  }\n\n  const to = event.payload.phone.replace(/[^\\d]/g, '');\n  return {\n    action: 'send',\n    event,\n    attempts,\n    send_request: buildWhatsAppTemplate(\n      to,\n      templates[type.templateKey],\n      type.parameters(event.payload),\n    ),\n  };\n}\n\n// n8n reports HTTP failures as '500 - \"<response body as a JSON string>\"'. Graph API bodies\n// look like {\"error\":{\"message\":...}}, so the provider's own message is pulled out when possible.\nfunction providerMessage(message) {\n  const match = /^\\d{3} - \"(.*)\"$/s.exec(message);\n  if (!match) return message;\n  try {\n    const body = JSON.parse(JSON.parse(`\"${match[1]}\"`));\n    return body?.error?.message ?? message;\n  } catch {\n    return message;\n  }\n}\n\nfunction describeSendError(response) {\n  const error = response?.error;\n  if (!error) return 'provider response has no message id';\n  if (typeof error === 'string') return error;\n  const status = error.httpCode ?? error.status ?? error.statusCode;\n  const message = providerMessage(String(error.message ?? error.description ?? 'request failed'));\n  return status ? `HTTP ${status}: ${message}` : message;\n}\n\n// Interprets the WhatsApp send result for one planned event. Failures stay unacked so the next\n// run retries them, until the attempt that reaches maxAttempts turns into an ops alert.\nfunction evaluateDelivery(plan, response, { maxAttempts }) {\n  const attempts = plan.attempts + 1;\n  const messageId = response?.messages?.[0]?.id;\n  if (typeof messageId === 'string' && messageId.length > 0) {\n    return {\n      event_id: plan.event.id,\n      status: 'delivered',\n      last_error: null,\n      provider_message_id: messageId,\n      ack: true,\n      alert_text: null,\n    };\n  }\n\n  const reason = describeSendError(response);\n  if (attempts >= maxAttempts) {\n    return finalOutcome(plan.event, 'gave_up', reason, attempts, true);\n  }\n  return {\n    event_id: plan.event.id,\n    status: 'failed',\n    last_error: truncate(reason, 500),\n    provider_message_id: null,\n    ack: false,\n    alert_text: null,\n  };\n}\n\nfunction buildAckBatches(outcomes) {\n  const ids = [...new Set(outcomes.filter((o) => o.ack).map((o) => o.event_id))];\n  const batches = [];\n  for (let i = 0; i < ids.length; i += ACK_BATCH_SIZE) {\n    batches.push({ ids: ids.slice(i, i + ACK_BATCH_SIZE) });\n  }\n  return batches;\n}\n\nmodule.exports = {\n  formatRupiah,\n  periodLabel,\n  collectOutboxEvents,\n  planOutboxDelivery,\n  evaluateDelivery,\n  buildAckBatches,\n};\n  },\n  'senders': function (module, exports, require) {\n'use strict';\n\nconst { truncate, truncateUtf8, singleLine } = require('./text');\n\nconst WHATSAPP_TEXT_LIMIT = 4096;\nconst INSTAGRAM_TEXT_BYTES = 1000;\nconst TELEGRAM_TEXT_LIMIT = 4096;\nconst TEMPLATE_PARAM_LIMIT = 1024;\n\nfunction requireText(text) {\n  if (typeof text !== 'string' || text.trim().length === 0) {\n    throw new Error('Outgoing message text must be a non-empty string');\n  }\n  return text.trim();\n}\n\n// WhatsApp Cloud API POST /{phone-number-id}/messages, free-form text. Only allowed inside\n// the 24-hour customer service window, which is always the case when replying to a message.\nfunction buildWhatsAppText(to, text) {\n  return {\n    messaging_product: 'whatsapp',\n    recipient_type: 'individual',\n    to,\n    type: 'text',\n    text: { preview_url: false, body: truncate(requireText(text), WHATSAPP_TEXT_LIMIT) },\n  };\n}\n\n// Business-initiated messages (outside the 24-hour window) must use a template that Meta has\n// approved. Template text parameters may not contain newlines, tabs or long runs of spaces.\nfunction buildWhatsAppTemplate(to, template, bodyParameters) {\n  if (!template?.name || !template?.language) {\n    throw new Error('WhatsApp template needs a name and a language code');\n  }\n  return {\n    messaging_product: 'whatsapp',\n    recipient_type: 'individual',\n    to,\n    type: 'template',\n    template: {\n      name: template.name,\n      language: { code: template.language },\n      components: [\n        {\n          type: 'body',\n          parameters: bodyParameters.map((value) => ({\n            type: 'text',\n            text: truncate(singleLine(requireText(String(value))), TEMPLATE_PARAM_LIMIT),\n          })),\n        },\n      ],\n    },\n  };\n}\n\n// Instagram API with Instagram Login, POST /{ig-id}/messages. Text is limited to 1000 bytes.\nfunction buildInstagramText(recipientId, text) {\n  return {\n    recipient: { id: recipientId },\n    message: { text: truncateUtf8(requireText(text), INSTAGRAM_TEXT_BYTES) },\n  };\n}\n\n// Private reply: a DM addressed by comment id. Meta allows one per comment, within 7 days.\nfunction buildInstagramPrivateReply(commentId, text) {\n  return {\n    recipient: { comment_id: commentId },\n    message: { text: truncateUtf8(requireText(text), INSTAGRAM_TEXT_BYTES) },\n  };\n}\n\n// Public reply: POST /{ig-comment-id}/replies.\nfunction buildInstagramPublicReply(text) {\n  return { message: truncateUtf8(requireText(text), INSTAGRAM_TEXT_BYTES) };\n}\n\nfunction buildTelegramText(chatId, text) {\n  return { chat_id: String(chatId), text: truncate(requireText(text), TELEGRAM_TEXT_LIMIT) };\n}\n\n// One channel-neutral description of \"send this text back to the customer\", consumed by the\n// per-channel send nodes. path_id is the id that goes into the Graph API URL.\nfunction buildReply(message, text) {\n  const target = message.reply_target;\n  switch (message.channel) {\n    case 'whatsapp':\n      return {\n        channel: 'whatsapp',\n        path_id: target.phone_number_id,\n        body: buildWhatsAppText(target.to, text),\n      };\n    case 'instagram':\n      return {\n        channel: 'instagram',\n        path_id: target.account_id,\n        body: buildInstagramText(target.recipient_id, text),\n      };\n    case 'telegram':\n      return { channel: 'telegram', ...buildTelegramText(target.chat_id, text) };\n    default:\n      throw new Error(`No sender for channel \"${String(message.channel)}\"`);\n  }\n}\n\nmodule.exports = {\n  buildWhatsAppText,\n  buildWhatsAppTemplate,\n  buildInstagramText,\n  buildInstagramPrivateReply,\n  buildInstagramPublicReply,\n  buildTelegramText,\n  buildReply,\n};\n  },\n  'text': function (module, exports, require) {\n'use strict';\n\nfunction asArray(value) {\n  return Array.isArray(value) ? value : [];\n}\n\nfunction cleanText(value) {\n  if (typeof value !== 'string') return '';\n  return value.replace(/\\r\\n?/g, '\\n').trim();\n}\n\nfunction isHighSurrogate(code) {\n  return code >= 0xd800 && code <= 0xdbff;\n}\n\n// Limits are counted in UTF-16 code units (JavaScript string length), which is what the\n// downstream APIs validate. The cut never splits a surrogate pair.\nfunction truncate(text, maxLength) {\n  if (text.length <= maxLength) return text;\n  let end = maxLength - 1;\n  if (isHighSurrogate(text.charCodeAt(end - 1))) end -= 1;\n  return `${text.slice(0, end)}…`;\n}\n\nfunction utf8ByteLength(codePoint) {\n  if (codePoint < 0x80) return 1;\n  if (codePoint < 0x800) return 2;\n  if (codePoint < 0x10000) return 3;\n  return 4;\n}\n\n// Instagram limits message text to 1000 bytes of UTF-8, not characters.\nfunction truncateUtf8(text, maxBytes) {\n  const ellipsisBytes = 3;\n  let total = 0;\n  for (const char of text) total += utf8ByteLength(char.codePointAt(0));\n  if (total <= maxBytes) return text;\n\n  let kept = '';\n  let used = 0;\n  for (const char of text) {\n    const size = utf8ByteLength(char.codePointAt(0));\n    if (used + size > maxBytes - ellipsisBytes) break;\n    kept += char;\n    used += size;\n  }\n  return `${kept}…`;\n}\n\n// Meta sends seconds in some payloads and milliseconds in others; anything above 1e12 is\n// treated as milliseconds (1e12 seconds is the year 33658).\nfunction unixToIso(value) {\n  const number = typeof value === 'string' ? Number(value) : value;\n  if (typeof number !== 'number' || !Number.isFinite(number) || number <= 0) return null;\n  const millis = number > 1e12 ? number : number * 1000;\n  return new Date(millis).toISOString();\n}\n\nfunction toMysqlDateTime(value) {\n  const date = value instanceof Date ? value : new Date(value);\n  if (Number.isNaN(date.getTime())) {\n    throw new Error(`Invalid date: ${String(value)}`);\n  }\n  return date.toISOString().replace('T', ' ').replace('Z', '');\n}\n\nfunction singleLine(text) {\n  return text.replace(/\\s+/g, ' ').trim();\n}\n\nmodule.exports = {\n  asArray,\n  cleanText,\n  truncate,\n  truncateUtf8,\n  unixToIso,\n  toMysqlDateTime,\n  singleLine,\n};\n  },\n};\n\nconst __cache = {};\nfunction __require(name) {\n  const key = name.replace(/^\\.\\//, '');\n  if (!__cache[key]) {\n    const module = { exports: {} };\n    __cache[key] = module;\n    __modules[key](module, module.exports, __require);\n  }\n  return __cache[key].exports;\n}\n\nconst { planOutboxDelivery } = __require('outbox');\n\nconst event = $('Collect Events').item.json;\nreturn {\n  json: planOutboxDelivery(event, $json, {\n    maxAttempts: CONFIG.OUTBOX_MAX_ATTEMPTS,\n    templates: {\n      payslipPublished: {\n        name: CONFIG.PAYSLIP_TEMPLATE_NAME,\n        language: CONFIG.WHATSAPP_TEMPLATE_LANGUAGE,\n      },\n      payrollPaid: {\n        name: CONFIG.PAYROLL_PAID_TEMPLATE_NAME,\n        language: CONFIG.WHATSAPP_TEMPLATE_LANGUAGE,\n      },\n    },\n  }),\n};\n"
+      },
+      "id": "e11634e2-309c-4330-abb0-29d1e1839cb8",
+      "name": "Plan Deliveries",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        960,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "6d559142-57e2-4cc1-abab-eaf070c53fde",
+                    "leftValue": "={{ $json.action }}",
+                    "rightValue": "send",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "send"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "9201d6f2-d131-4cbd-add3-24a03d63928c",
+                    "leftValue": "={{ $json.action }}",
+                    "rightValue": "finalize",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "finalize"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "e5059d5e-8ccd-4f04-a0a9-5e0274a725ec",
+                    "leftValue": "={{ $json.action }}",
+                    "rightValue": "ack_only",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "ack_only"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "b62cdee1-6061-4905-aa6e-f4b81d7e2ade",
+      "name": "Route Delivery",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [
+        1200,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "id": "b19e78dd-00d4-4d93-a8cc-432250bb64f6",
+      "name": "Loop Sends",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        1440,
+        140
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE outbox_delivery_attempts SET attempts = attempts + 1, last_attempt_at = UTC_TIMESTAMP(3) WHERE event_id = $1",
+        "options": {
+          "queryBatching": "independently",
+          "queryReplacement": "={{ [$json.event.id] }}"
+        }
+      },
+      "id": "2b912d9b-53a8-42dd-a505-008cb56f89e8",
+      "name": "Count Attempt",
+      "type": "n8n-nodes-base.mySql",
+      "typeVersion": 2.5,
+      "position": [
+        1680,
+        0
+      ],
+      "credentials": {
+        "mySql": {
+          "id": null,
+          "name": "Inbox MySQL"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://graph.facebook.com/v25.0/200000000000001/messages",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBearerAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($('Loop Sends').item.json.send_request) }}",
+        "options": {
+          "timeout": 15000
+        }
+      },
+      "id": "c6247a15-d78f-4f25-aa5c-64beb4e2e5d9",
+      "name": "Send WhatsApp Template",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1920,
+        0
+      ],
+      "credentials": {
+        "httpBearerAuth": {
+          "id": null,
+          "name": "WhatsApp Cloud API"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// Built by scripts/build.js from workflows/code/payslip-notifications/evaluate-send.js and src/. Edit those files, not this node.\n\nconst CONFIG = Object.freeze({\n  \"OUTBOX_MAX_ATTEMPTS\": 5\n});\n\nconst __modules = {\n  'outbox': function (module, exports, require) {\n'use strict';\n\nconst { buildWhatsAppTemplate } = require('./senders');\nconst { asArray, truncate } = require('./text');\n\nconst ACK_BATCH_SIZE = 100;\nconst PHONE_PATTERN = /^\\+?[1-9]\\d{7,14}$/;\nconst PERIOD_PATTERN = /^(\\d{4})-(0[1-9]|1[0-2])$/;\nconst MONTHS_ID = [\n  'Januari',\n  'Februari',\n  'Maret',\n  'April',\n  'Mei',\n  'Juni',\n  'Juli',\n  'Agustus',\n  'September',\n  'Oktober',\n  'November',\n  'Desember',\n];\n// Statuses after which an event is only acknowledged again, never re-sent.\nconst FINAL_STATUSES = ['delivered', 'undeliverable', 'gave_up', 'skipped'];\n\nfunction formatRupiah(amount) {\n  return `Rp ${String(amount).replace(/\\B(?=(\\d{3})+(?!\\d))/g, '.')}`;\n}\n\nfunction periodLabel(period) {\n  const match = PERIOD_PATTERN.exec(period);\n  return `${MONTHS_ID[Number(match[2]) - 1]} ${match[1]}`;\n}\n\n// The two event types from hr-payroll-api and how each becomes a WhatsApp template message.\nconst EVENT_TYPES = {\n  'payslip.published': {\n    templateKey: 'payslipPublished',\n    validate: (p) => typeof p.payslip_url === 'string' && p.payslip_url.length > 0,\n    parameters: (p) => [p.employee_name, periodLabel(p.period), p.payslip_url],\n  },\n  'payroll.paid': {\n    templateKey: 'payrollPaid',\n    validate: (p) => Number.isInteger(p.net_pay) && p.net_pay >= 0,\n    parameters: (p) => [p.employee_name, periodLabel(p.period), formatRupiah(p.net_pay)],\n  },\n};\n\n// Flattens the pages returned by GET /api/v1/integrations/outbox. Delivery is at least once,\n// so the same id can appear twice; the first copy wins.\nfunction collectOutboxEvents(pages) {\n  const byId = new Map();\n  for (const page of asArray(pages)) {\n    if (!page || !Array.isArray(page.data)) {\n      throw new Error('Outbox response has no \"data\" array; the hr-payroll-api contract changed');\n    }\n    for (const event of page.data) {\n      if (!Number.isInteger(event?.id) || event.id < 1) {\n        throw new Error(`Outbox event has an invalid id: ${JSON.stringify(event?.id)}`);\n      }\n      if (!byId.has(event.id)) byId.set(event.id, event);\n    }\n  }\n  return [...byId.values()].sort((a, b) => a.id - b.id);\n}\n\nfunction payloadProblem(event, type) {\n  const payload = event.payload;\n  if (!payload || typeof payload !== 'object') return 'payload missing';\n  if (typeof payload.employee_name !== 'string' || payload.employee_name.trim() === '') {\n    return 'employee_name missing';\n  }\n  if (typeof payload.period !== 'string' || !PERIOD_PATTERN.test(payload.period)) {\n    return 'period is not YYYY-MM';\n  }\n  if (!type.validate(payload)) return `payload incomplete for ${event.type}`;\n  if (payload.phone === null || payload.phone === undefined) return 'employee has no phone number';\n  if (\n    typeof payload.phone !== 'string' ||\n    !PHONE_PATTERN.test(payload.phone.replace(/[\\s-]/g, ''))\n  ) {\n    return 'phone number is not a valid international number';\n  }\n  return null;\n}\n\nfunction renderOpsAlert(event, reason, attempts) {\n  const payload = event.payload ?? {};\n  return [\n    'Payroll notification needs attention',\n    `Event: #${event.id} ${event.type}`,\n    `Employee: ${payload.employee_name ?? 'unknown'} (id ${payload.employee_id ?? 'unknown'})`,\n    `Period: ${payload.period ?? 'unknown'}`,\n    `Reason: ${reason}`,\n    `Attempts: ${attempts}`,\n    'The event has been acknowledged in hr-payroll-api. Please notify the employee manually.',\n  ].join('\\n');\n}\n\nfunction finalOutcome(event, status, reason, attempts, alert) {\n  return {\n    event_id: event.id,\n    status,\n    last_error: reason ? truncate(reason, 500) : null,\n    provider_message_id: null,\n    ack: true,\n    alert_text: alert ? renderOpsAlert(event, reason, attempts) : null,\n  };\n}\n\n// Decides what to do with one outbox event, given its row in outbox_delivery_attempts:\n// - send: deliver a WhatsApp template (send_request), evaluated afterwards\n// - finalize: record a terminal status, alert ops if needed, then acknowledge\n// - ack_only: already handled in an earlier run whose acknowledgement did not go through\nfunction planOutboxDelivery(event, state, { maxAttempts, templates }) {\n  const attempts = Number(state?.attempts ?? 0);\n  if (FINAL_STATUSES.includes(state?.status)) {\n    return { action: 'ack_only', event_id: event.id, ack: true };\n  }\n\n  const type = EVENT_TYPES[event.type];\n  if (!type) {\n    const reason = `unsupported event type ${String(event.type)}`;\n    return { action: 'finalize', ...finalOutcome(event, 'skipped', reason, attempts, false) };\n  }\n\n  const problem = payloadProblem(event, type);\n  if (problem) {\n    return { action: 'finalize', ...finalOutcome(event, 'undeliverable', problem, attempts, true) };\n  }\n  if (attempts >= maxAttempts) {\n    const reason = 'maximum attempts reached';\n    return { action: 'finalize', ...finalOutcome(event, 'gave_up', reason, attempts, true) };\n  }\n\n  const to = event.payload.phone.replace(/[^\\d]/g, '');\n  return {\n    action: 'send',\n    event,\n    attempts,\n    send_request: buildWhatsAppTemplate(\n      to,\n      templates[type.templateKey],\n      type.parameters(event.payload),\n    ),\n  };\n}\n\n// n8n reports HTTP failures as '500 - \"<response body as a JSON string>\"'. Graph API bodies\n// look like {\"error\":{\"message\":...}}, so the provider's own message is pulled out when possible.\nfunction providerMessage(message) {\n  const match = /^\\d{3} - \"(.*)\"$/s.exec(message);\n  if (!match) return message;\n  try {\n    const body = JSON.parse(JSON.parse(`\"${match[1]}\"`));\n    return body?.error?.message ?? message;\n  } catch {\n    return message;\n  }\n}\n\nfunction describeSendError(response) {\n  const error = response?.error;\n  if (!error) return 'provider response has no message id';\n  if (typeof error === 'string') return error;\n  const status = error.httpCode ?? error.status ?? error.statusCode;\n  const message = providerMessage(String(error.message ?? error.description ?? 'request failed'));\n  return status ? `HTTP ${status}: ${message}` : message;\n}\n\n// Interprets the WhatsApp send result for one planned event. Failures stay unacked so the next\n// run retries them, until the attempt that reaches maxAttempts turns into an ops alert.\nfunction evaluateDelivery(plan, response, { maxAttempts }) {\n  const attempts = plan.attempts + 1;\n  const messageId = response?.messages?.[0]?.id;\n  if (typeof messageId === 'string' && messageId.length > 0) {\n    return {\n      event_id: plan.event.id,\n      status: 'delivered',\n      last_error: null,\n      provider_message_id: messageId,\n      ack: true,\n      alert_text: null,\n    };\n  }\n\n  const reason = describeSendError(response);\n  if (attempts >= maxAttempts) {\n    return finalOutcome(plan.event, 'gave_up', reason, attempts, true);\n  }\n  return {\n    event_id: plan.event.id,\n    status: 'failed',\n    last_error: truncate(reason, 500),\n    provider_message_id: null,\n    ack: false,\n    alert_text: null,\n  };\n}\n\nfunction buildAckBatches(outcomes) {\n  const ids = [...new Set(outcomes.filter((o) => o.ack).map((o) => o.event_id))];\n  const batches = [];\n  for (let i = 0; i < ids.length; i += ACK_BATCH_SIZE) {\n    batches.push({ ids: ids.slice(i, i + ACK_BATCH_SIZE) });\n  }\n  return batches;\n}\n\nmodule.exports = {\n  formatRupiah,\n  periodLabel,\n  collectOutboxEvents,\n  planOutboxDelivery,\n  evaluateDelivery,\n  buildAckBatches,\n};\n  },\n  'senders': function (module, exports, require) {\n'use strict';\n\nconst { truncate, truncateUtf8, singleLine } = require('./text');\n\nconst WHATSAPP_TEXT_LIMIT = 4096;\nconst INSTAGRAM_TEXT_BYTES = 1000;\nconst TELEGRAM_TEXT_LIMIT = 4096;\nconst TEMPLATE_PARAM_LIMIT = 1024;\n\nfunction requireText(text) {\n  if (typeof text !== 'string' || text.trim().length === 0) {\n    throw new Error('Outgoing message text must be a non-empty string');\n  }\n  return text.trim();\n}\n\n// WhatsApp Cloud API POST /{phone-number-id}/messages, free-form text. Only allowed inside\n// the 24-hour customer service window, which is always the case when replying to a message.\nfunction buildWhatsAppText(to, text) {\n  return {\n    messaging_product: 'whatsapp',\n    recipient_type: 'individual',\n    to,\n    type: 'text',\n    text: { preview_url: false, body: truncate(requireText(text), WHATSAPP_TEXT_LIMIT) },\n  };\n}\n\n// Business-initiated messages (outside the 24-hour window) must use a template that Meta has\n// approved. Template text parameters may not contain newlines, tabs or long runs of spaces.\nfunction buildWhatsAppTemplate(to, template, bodyParameters) {\n  if (!template?.name || !template?.language) {\n    throw new Error('WhatsApp template needs a name and a language code');\n  }\n  return {\n    messaging_product: 'whatsapp',\n    recipient_type: 'individual',\n    to,\n    type: 'template',\n    template: {\n      name: template.name,\n      language: { code: template.language },\n      components: [\n        {\n          type: 'body',\n          parameters: bodyParameters.map((value) => ({\n            type: 'text',\n            text: truncate(singleLine(requireText(String(value))), TEMPLATE_PARAM_LIMIT),\n          })),\n        },\n      ],\n    },\n  };\n}\n\n// Instagram API with Instagram Login, POST /{ig-id}/messages. Text is limited to 1000 bytes.\nfunction buildInstagramText(recipientId, text) {\n  return {\n    recipient: { id: recipientId },\n    message: { text: truncateUtf8(requireText(text), INSTAGRAM_TEXT_BYTES) },\n  };\n}\n\n// Private reply: a DM addressed by comment id. Meta allows one per comment, within 7 days.\nfunction buildInstagramPrivateReply(commentId, text) {\n  return {\n    recipient: { comment_id: commentId },\n    message: { text: truncateUtf8(requireText(text), INSTAGRAM_TEXT_BYTES) },\n  };\n}\n\n// Public reply: POST /{ig-comment-id}/replies.\nfunction buildInstagramPublicReply(text) {\n  return { message: truncateUtf8(requireText(text), INSTAGRAM_TEXT_BYTES) };\n}\n\nfunction buildTelegramText(chatId, text) {\n  return { chat_id: String(chatId), text: truncate(requireText(text), TELEGRAM_TEXT_LIMIT) };\n}\n\n// One channel-neutral description of \"send this text back to the customer\", consumed by the\n// per-channel send nodes. path_id is the id that goes into the Graph API URL.\nfunction buildReply(message, text) {\n  const target = message.reply_target;\n  switch (message.channel) {\n    case 'whatsapp':\n      return {\n        channel: 'whatsapp',\n        path_id: target.phone_number_id,\n        body: buildWhatsAppText(target.to, text),\n      };\n    case 'instagram':\n      return {\n        channel: 'instagram',\n        path_id: target.account_id,\n        body: buildInstagramText(target.recipient_id, text),\n      };\n    case 'telegram':\n      return { channel: 'telegram', ...buildTelegramText(target.chat_id, text) };\n    default:\n      throw new Error(`No sender for channel \"${String(message.channel)}\"`);\n  }\n}\n\nmodule.exports = {\n  buildWhatsAppText,\n  buildWhatsAppTemplate,\n  buildInstagramText,\n  buildInstagramPrivateReply,\n  buildInstagramPublicReply,\n  buildTelegramText,\n  buildReply,\n};\n  },\n  'text': function (module, exports, require) {\n'use strict';\n\nfunction asArray(value) {\n  return Array.isArray(value) ? value : [];\n}\n\nfunction cleanText(value) {\n  if (typeof value !== 'string') return '';\n  return value.replace(/\\r\\n?/g, '\\n').trim();\n}\n\nfunction isHighSurrogate(code) {\n  return code >= 0xd800 && code <= 0xdbff;\n}\n\n// Limits are counted in UTF-16 code units (JavaScript string length), which is what the\n// downstream APIs validate. The cut never splits a surrogate pair.\nfunction truncate(text, maxLength) {\n  if (text.length <= maxLength) return text;\n  let end = maxLength - 1;\n  if (isHighSurrogate(text.charCodeAt(end - 1))) end -= 1;\n  return `${text.slice(0, end)}…`;\n}\n\nfunction utf8ByteLength(codePoint) {\n  if (codePoint < 0x80) return 1;\n  if (codePoint < 0x800) return 2;\n  if (codePoint < 0x10000) return 3;\n  return 4;\n}\n\n// Instagram limits message text to 1000 bytes of UTF-8, not characters.\nfunction truncateUtf8(text, maxBytes) {\n  const ellipsisBytes = 3;\n  let total = 0;\n  for (const char of text) total += utf8ByteLength(char.codePointAt(0));\n  if (total <= maxBytes) return text;\n\n  let kept = '';\n  let used = 0;\n  for (const char of text) {\n    const size = utf8ByteLength(char.codePointAt(0));\n    if (used + size > maxBytes - ellipsisBytes) break;\n    kept += char;\n    used += size;\n  }\n  return `${kept}…`;\n}\n\n// Meta sends seconds in some payloads and milliseconds in others; anything above 1e12 is\n// treated as milliseconds (1e12 seconds is the year 33658).\nfunction unixToIso(value) {\n  const number = typeof value === 'string' ? Number(value) : value;\n  if (typeof number !== 'number' || !Number.isFinite(number) || number <= 0) return null;\n  const millis = number > 1e12 ? number : number * 1000;\n  return new Date(millis).toISOString();\n}\n\nfunction toMysqlDateTime(value) {\n  const date = value instanceof Date ? value : new Date(value);\n  if (Number.isNaN(date.getTime())) {\n    throw new Error(`Invalid date: ${String(value)}`);\n  }\n  return date.toISOString().replace('T', ' ').replace('Z', '');\n}\n\nfunction singleLine(text) {\n  return text.replace(/\\s+/g, ' ').trim();\n}\n\nmodule.exports = {\n  asArray,\n  cleanText,\n  truncate,\n  truncateUtf8,\n  unixToIso,\n  toMysqlDateTime,\n  singleLine,\n};\n  },\n};\n\nconst __cache = {};\nfunction __require(name) {\n  const key = name.replace(/^\\.\\//, '');\n  if (!__cache[key]) {\n    const module = { exports: {} };\n    __cache[key] = module;\n    __modules[key](module, module.exports, __require);\n  }\n  return __cache[key].exports;\n}\n\nconst { evaluateDelivery } = __require('outbox');\n\nconst plan = $('Loop Sends').item.json;\nreturn { json: evaluateDelivery(plan, $json, { maxAttempts: CONFIG.OUTBOX_MAX_ATTEMPTS }) };\n"
+      },
+      "id": "57946792-8a8e-45d4-a487-55ba1380c095",
+      "name": "Evaluate Send",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2160,
+        0
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "cf827e58-32c8-4ab4-a32c-fa0e84a1c186",
+      "name": "Delivery Outcomes",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        1920,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "table": {
+          "__rl": true,
+          "value": "outbox_delivery_attempts",
+          "mode": "name"
+        },
+        "dataMode": "defineBelow",
+        "columnToMatchOn": "event_id",
+        "valueToMatchOn": "={{ $json.event_id }}",
+        "valuesToSend": {
+          "values": [
+            {
+              "column": "status",
+              "value": "={{ $json.status }}"
+            },
+            {
+              "column": "last_error",
+              "value": "={{ $json.last_error }}"
+            },
+            {
+              "column": "provider_message_id",
+              "value": "={{ $json.provider_message_id }}"
+            }
+          ]
+        },
+        "options": {
+          "queryBatching": "independently"
+        }
+      },
+      "id": "1574f47e-448d-4883-aaf7-69453fed065b",
+      "name": "Save Delivery State",
+      "type": "n8n-nodes-base.mySql",
+      "typeVersion": 2.5,
+      "position": [
+        2160,
+        220
+      ],
+      "credentials": {
+        "mySql": {
+          "id": null,
+          "name": "Inbox MySQL"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "6c67b8d1-b581-47c3-ad70-a32b109bce04",
+              "leftValue": "={{ Boolean($json.alert_text) }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "33df92e6-3330-4222-af96-eef556c39986",
+      "name": "Needs Ops Alert?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        2160,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "chatId": "-1001000000002",
+        "text": "={{ $json.alert_text }}",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "id": "6fa3767d-f89e-46aa-a2b3-e90202e97385",
+      "name": "Alert Ops",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        2400,
+        400
+      ],
+      "credentials": {
+        "telegramApi": {
+          "id": null,
+          "name": "Telegram Bot"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000
+    },
+    {
+      "parameters": {
+        "jsCode": "// Built by scripts/build.js from workflows/code/payslip-notifications/build-ack-batches.js and src/. Edit those files, not this node.\n\nconst __modules = {\n  'outbox': function (module, exports, require) {\n'use strict';\n\nconst { buildWhatsAppTemplate } = require('./senders');\nconst { asArray, truncate } = require('./text');\n\nconst ACK_BATCH_SIZE = 100;\nconst PHONE_PATTERN = /^\\+?[1-9]\\d{7,14}$/;\nconst PERIOD_PATTERN = /^(\\d{4})-(0[1-9]|1[0-2])$/;\nconst MONTHS_ID = [\n  'Januari',\n  'Februari',\n  'Maret',\n  'April',\n  'Mei',\n  'Juni',\n  'Juli',\n  'Agustus',\n  'September',\n  'Oktober',\n  'November',\n  'Desember',\n];\n// Statuses after which an event is only acknowledged again, never re-sent.\nconst FINAL_STATUSES = ['delivered', 'undeliverable', 'gave_up', 'skipped'];\n\nfunction formatRupiah(amount) {\n  return `Rp ${String(amount).replace(/\\B(?=(\\d{3})+(?!\\d))/g, '.')}`;\n}\n\nfunction periodLabel(period) {\n  const match = PERIOD_PATTERN.exec(period);\n  return `${MONTHS_ID[Number(match[2]) - 1]} ${match[1]}`;\n}\n\n// The two event types from hr-payroll-api and how each becomes a WhatsApp template message.\nconst EVENT_TYPES = {\n  'payslip.published': {\n    templateKey: 'payslipPublished',\n    validate: (p) => typeof p.payslip_url === 'string' && p.payslip_url.length > 0,\n    parameters: (p) => [p.employee_name, periodLabel(p.period), p.payslip_url],\n  },\n  'payroll.paid': {\n    templateKey: 'payrollPaid',\n    validate: (p) => Number.isInteger(p.net_pay) && p.net_pay >= 0,\n    parameters: (p) => [p.employee_name, periodLabel(p.period), formatRupiah(p.net_pay)],\n  },\n};\n\n// Flattens the pages returned by GET /api/v1/integrations/outbox. Delivery is at least once,\n// so the same id can appear twice; the first copy wins.\nfunction collectOutboxEvents(pages) {\n  const byId = new Map();\n  for (const page of asArray(pages)) {\n    if (!page || !Array.isArray(page.data)) {\n      throw new Error('Outbox response has no \"data\" array; the hr-payroll-api contract changed');\n    }\n    for (const event of page.data) {\n      if (!Number.isInteger(event?.id) || event.id < 1) {\n        throw new Error(`Outbox event has an invalid id: ${JSON.stringify(event?.id)}`);\n      }\n      if (!byId.has(event.id)) byId.set(event.id, event);\n    }\n  }\n  return [...byId.values()].sort((a, b) => a.id - b.id);\n}\n\nfunction payloadProblem(event, type) {\n  const payload = event.payload;\n  if (!payload || typeof payload !== 'object') return 'payload missing';\n  if (typeof payload.employee_name !== 'string' || payload.employee_name.trim() === '') {\n    return 'employee_name missing';\n  }\n  if (typeof payload.period !== 'string' || !PERIOD_PATTERN.test(payload.period)) {\n    return 'period is not YYYY-MM';\n  }\n  if (!type.validate(payload)) return `payload incomplete for ${event.type}`;\n  if (payload.phone === null || payload.phone === undefined) return 'employee has no phone number';\n  if (\n    typeof payload.phone !== 'string' ||\n    !PHONE_PATTERN.test(payload.phone.replace(/[\\s-]/g, ''))\n  ) {\n    return 'phone number is not a valid international number';\n  }\n  return null;\n}\n\nfunction renderOpsAlert(event, reason, attempts) {\n  const payload = event.payload ?? {};\n  return [\n    'Payroll notification needs attention',\n    `Event: #${event.id} ${event.type}`,\n    `Employee: ${payload.employee_name ?? 'unknown'} (id ${payload.employee_id ?? 'unknown'})`,\n    `Period: ${payload.period ?? 'unknown'}`,\n    `Reason: ${reason}`,\n    `Attempts: ${attempts}`,\n    'The event has been acknowledged in hr-payroll-api. Please notify the employee manually.',\n  ].join('\\n');\n}\n\nfunction finalOutcome(event, status, reason, attempts, alert) {\n  return {\n    event_id: event.id,\n    status,\n    last_error: reason ? truncate(reason, 500) : null,\n    provider_message_id: null,\n    ack: true,\n    alert_text: alert ? renderOpsAlert(event, reason, attempts) : null,\n  };\n}\n\n// Decides what to do with one outbox event, given its row in outbox_delivery_attempts:\n// - send: deliver a WhatsApp template (send_request), evaluated afterwards\n// - finalize: record a terminal status, alert ops if needed, then acknowledge\n// - ack_only: already handled in an earlier run whose acknowledgement did not go through\nfunction planOutboxDelivery(event, state, { maxAttempts, templates }) {\n  const attempts = Number(state?.attempts ?? 0);\n  if (FINAL_STATUSES.includes(state?.status)) {\n    return { action: 'ack_only', event_id: event.id, ack: true };\n  }\n\n  const type = EVENT_TYPES[event.type];\n  if (!type) {\n    const reason = `unsupported event type ${String(event.type)}`;\n    return { action: 'finalize', ...finalOutcome(event, 'skipped', reason, attempts, false) };\n  }\n\n  const problem = payloadProblem(event, type);\n  if (problem) {\n    return { action: 'finalize', ...finalOutcome(event, 'undeliverable', problem, attempts, true) };\n  }\n  if (attempts >= maxAttempts) {\n    const reason = 'maximum attempts reached';\n    return { action: 'finalize', ...finalOutcome(event, 'gave_up', reason, attempts, true) };\n  }\n\n  const to = event.payload.phone.replace(/[^\\d]/g, '');\n  return {\n    action: 'send',\n    event,\n    attempts,\n    send_request: buildWhatsAppTemplate(\n      to,\n      templates[type.templateKey],\n      type.parameters(event.payload),\n    ),\n  };\n}\n\n// n8n reports HTTP failures as '500 - \"<response body as a JSON string>\"'. Graph API bodies\n// look like {\"error\":{\"message\":...}}, so the provider's own message is pulled out when possible.\nfunction providerMessage(message) {\n  const match = /^\\d{3} - \"(.*)\"$/s.exec(message);\n  if (!match) return message;\n  try {\n    const body = JSON.parse(JSON.parse(`\"${match[1]}\"`));\n    return body?.error?.message ?? message;\n  } catch {\n    return message;\n  }\n}\n\nfunction describeSendError(response) {\n  const error = response?.error;\n  if (!error) return 'provider response has no message id';\n  if (typeof error === 'string') return error;\n  const status = error.httpCode ?? error.status ?? error.statusCode;\n  const message = providerMessage(String(error.message ?? error.description ?? 'request failed'));\n  return status ? `HTTP ${status}: ${message}` : message;\n}\n\n// Interprets the WhatsApp send result for one planned event. Failures stay unacked so the next\n// run retries them, until the attempt that reaches maxAttempts turns into an ops alert.\nfunction evaluateDelivery(plan, response, { maxAttempts }) {\n  const attempts = plan.attempts + 1;\n  const messageId = response?.messages?.[0]?.id;\n  if (typeof messageId === 'string' && messageId.length > 0) {\n    return {\n      event_id: plan.event.id,\n      status: 'delivered',\n      last_error: null,\n      provider_message_id: messageId,\n      ack: true,\n      alert_text: null,\n    };\n  }\n\n  const reason = describeSendError(response);\n  if (attempts >= maxAttempts) {\n    return finalOutcome(plan.event, 'gave_up', reason, attempts, true);\n  }\n  return {\n    event_id: plan.event.id,\n    status: 'failed',\n    last_error: truncate(reason, 500),\n    provider_message_id: null,\n    ack: false,\n    alert_text: null,\n  };\n}\n\nfunction buildAckBatches(outcomes) {\n  const ids = [...new Set(outcomes.filter((o) => o.ack).map((o) => o.event_id))];\n  const batches = [];\n  for (let i = 0; i < ids.length; i += ACK_BATCH_SIZE) {\n    batches.push({ ids: ids.slice(i, i + ACK_BATCH_SIZE) });\n  }\n  return batches;\n}\n\nmodule.exports = {\n  formatRupiah,\n  periodLabel,\n  collectOutboxEvents,\n  planOutboxDelivery,\n  evaluateDelivery,\n  buildAckBatches,\n};\n  },\n  'senders': function (module, exports, require) {\n'use strict';\n\nconst { truncate, truncateUtf8, singleLine } = require('./text');\n\nconst WHATSAPP_TEXT_LIMIT = 4096;\nconst INSTAGRAM_TEXT_BYTES = 1000;\nconst TELEGRAM_TEXT_LIMIT = 4096;\nconst TEMPLATE_PARAM_LIMIT = 1024;\n\nfunction requireText(text) {\n  if (typeof text !== 'string' || text.trim().length === 0) {\n    throw new Error('Outgoing message text must be a non-empty string');\n  }\n  return text.trim();\n}\n\n// WhatsApp Cloud API POST /{phone-number-id}/messages, free-form text. Only allowed inside\n// the 24-hour customer service window, which is always the case when replying to a message.\nfunction buildWhatsAppText(to, text) {\n  return {\n    messaging_product: 'whatsapp',\n    recipient_type: 'individual',\n    to,\n    type: 'text',\n    text: { preview_url: false, body: truncate(requireText(text), WHATSAPP_TEXT_LIMIT) },\n  };\n}\n\n// Business-initiated messages (outside the 24-hour window) must use a template that Meta has\n// approved. Template text parameters may not contain newlines, tabs or long runs of spaces.\nfunction buildWhatsAppTemplate(to, template, bodyParameters) {\n  if (!template?.name || !template?.language) {\n    throw new Error('WhatsApp template needs a name and a language code');\n  }\n  return {\n    messaging_product: 'whatsapp',\n    recipient_type: 'individual',\n    to,\n    type: 'template',\n    template: {\n      name: template.name,\n      language: { code: template.language },\n      components: [\n        {\n          type: 'body',\n          parameters: bodyParameters.map((value) => ({\n            type: 'text',\n            text: truncate(singleLine(requireText(String(value))), TEMPLATE_PARAM_LIMIT),\n          })),\n        },\n      ],\n    },\n  };\n}\n\n// Instagram API with Instagram Login, POST /{ig-id}/messages. Text is limited to 1000 bytes.\nfunction buildInstagramText(recipientId, text) {\n  return {\n    recipient: { id: recipientId },\n    message: { text: truncateUtf8(requireText(text), INSTAGRAM_TEXT_BYTES) },\n  };\n}\n\n// Private reply: a DM addressed by comment id. Meta allows one per comment, within 7 days.\nfunction buildInstagramPrivateReply(commentId, text) {\n  return {\n    recipient: { comment_id: commentId },\n    message: { text: truncateUtf8(requireText(text), INSTAGRAM_TEXT_BYTES) },\n  };\n}\n\n// Public reply: POST /{ig-comment-id}/replies.\nfunction buildInstagramPublicReply(text) {\n  return { message: truncateUtf8(requireText(text), INSTAGRAM_TEXT_BYTES) };\n}\n\nfunction buildTelegramText(chatId, text) {\n  return { chat_id: String(chatId), text: truncate(requireText(text), TELEGRAM_TEXT_LIMIT) };\n}\n\n// One channel-neutral description of \"send this text back to the customer\", consumed by the\n// per-channel send nodes. path_id is the id that goes into the Graph API URL.\nfunction buildReply(message, text) {\n  const target = message.reply_target;\n  switch (message.channel) {\n    case 'whatsapp':\n      return {\n        channel: 'whatsapp',\n        path_id: target.phone_number_id,\n        body: buildWhatsAppText(target.to, text),\n      };\n    case 'instagram':\n      return {\n        channel: 'instagram',\n        path_id: target.account_id,\n        body: buildInstagramText(target.recipient_id, text),\n      };\n    case 'telegram':\n      return { channel: 'telegram', ...buildTelegramText(target.chat_id, text) };\n    default:\n      throw new Error(`No sender for channel \"${String(message.channel)}\"`);\n  }\n}\n\nmodule.exports = {\n  buildWhatsAppText,\n  buildWhatsAppTemplate,\n  buildInstagramText,\n  buildInstagramPrivateReply,\n  buildInstagramPublicReply,\n  buildTelegramText,\n  buildReply,\n};\n  },\n  'text': function (module, exports, require) {\n'use strict';\n\nfunction asArray(value) {\n  return Array.isArray(value) ? value : [];\n}\n\nfunction cleanText(value) {\n  if (typeof value !== 'string') return '';\n  return value.replace(/\\r\\n?/g, '\\n').trim();\n}\n\nfunction isHighSurrogate(code) {\n  return code >= 0xd800 && code <= 0xdbff;\n}\n\n// Limits are counted in UTF-16 code units (JavaScript string length), which is what the\n// downstream APIs validate. The cut never splits a surrogate pair.\nfunction truncate(text, maxLength) {\n  if (text.length <= maxLength) return text;\n  let end = maxLength - 1;\n  if (isHighSurrogate(text.charCodeAt(end - 1))) end -= 1;\n  return `${text.slice(0, end)}…`;\n}\n\nfunction utf8ByteLength(codePoint) {\n  if (codePoint < 0x80) return 1;\n  if (codePoint < 0x800) return 2;\n  if (codePoint < 0x10000) return 3;\n  return 4;\n}\n\n// Instagram limits message text to 1000 bytes of UTF-8, not characters.\nfunction truncateUtf8(text, maxBytes) {\n  const ellipsisBytes = 3;\n  let total = 0;\n  for (const char of text) total += utf8ByteLength(char.codePointAt(0));\n  if (total <= maxBytes) return text;\n\n  let kept = '';\n  let used = 0;\n  for (const char of text) {\n    const size = utf8ByteLength(char.codePointAt(0));\n    if (used + size > maxBytes - ellipsisBytes) break;\n    kept += char;\n    used += size;\n  }\n  return `${kept}…`;\n}\n\n// Meta sends seconds in some payloads and milliseconds in others; anything above 1e12 is\n// treated as milliseconds (1e12 seconds is the year 33658).\nfunction unixToIso(value) {\n  const number = typeof value === 'string' ? Number(value) : value;\n  if (typeof number !== 'number' || !Number.isFinite(number) || number <= 0) return null;\n  const millis = number > 1e12 ? number : number * 1000;\n  return new Date(millis).toISOString();\n}\n\nfunction toMysqlDateTime(value) {\n  const date = value instanceof Date ? value : new Date(value);\n  if (Number.isNaN(date.getTime())) {\n    throw new Error(`Invalid date: ${String(value)}`);\n  }\n  return date.toISOString().replace('T', ' ').replace('Z', '');\n}\n\nfunction singleLine(text) {\n  return text.replace(/\\s+/g, ' ').trim();\n}\n\nmodule.exports = {\n  asArray,\n  cleanText,\n  truncate,\n  truncateUtf8,\n  unixToIso,\n  toMysqlDateTime,\n  singleLine,\n};\n  },\n};\n\nconst __cache = {};\nfunction __require(name) {\n  const key = name.replace(/^\\.\\//, '');\n  if (!__cache[key]) {\n    const module = { exports: {} };\n    __cache[key] = module;\n    __modules[key](module, module.exports, __require);\n  }\n  return __cache[key].exports;\n}\n\nconst { buildAckBatches } = __require('outbox');\n\nreturn buildAckBatches($input.all().map((item) => item.json)).map((batch) => ({ json: batch }));\n"
+      },
+      "id": "c83b3fc6-8966-4ba4-a23b-c4edae92f975",
+      "name": "Build Ack Batches",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2160,
+        580
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://host.docker.internal:8082/api/v1/integrations/outbox/ack",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ ids: $json.ids }) }}",
+        "options": {
+          "timeout": 15000
+        }
+      },
+      "id": "15973f89-a240-4b9a-a02c-f4c40e17c888",
+      "name": "Acknowledge Events",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2400,
+        580
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": null,
+          "name": "HR Payroll API"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000
+    }
+  ],
+  "connections": {
+    "Every 15 Minutes": {
+      "main": [
+        [
+          {
+            "node": "Fetch Outbox",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Run Manually": {
+      "main": [
+        [
+          {
+            "node": "Fetch Outbox",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Outbox": {
+      "main": [
+        [
+          {
+            "node": "Collect Events",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Collect Events": {
+      "main": [
+        [
+          {
+            "node": "Register Events",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Register Events": {
+      "main": [
+        [
+          {
+            "node": "Plan Deliveries",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Plan Deliveries": {
+      "main": [
+        [
+          {
+            "node": "Route Delivery",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Route Delivery": {
+      "main": [
+        [
+          {
+            "node": "Loop Sends",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Delivery Outcomes",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Build Ack Batches",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Sends": {
+      "main": [
+        [
+          {
+            "node": "Delivery Outcomes",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Count Attempt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Count Attempt": {
+      "main": [
+        [
+          {
+            "node": "Send WhatsApp Template",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send WhatsApp Template": {
+      "main": [
+        [
+          {
+            "node": "Evaluate Send",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Evaluate Send": {
+      "main": [
+        [
+          {
+            "node": "Loop Sends",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Delivery Outcomes": {
+      "main": [
+        [
+          {
+            "node": "Save Delivery State",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Needs Ops Alert?",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Build Ack Batches",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Needs Ops Alert?": {
+      "main": [
+        [
+          {
+            "node": "Alert Ops",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Ack Batches": {
+      "main": [
+        [
+          {
+            "node": "Acknowledge Events",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "errorWorkflow": "oiaErrorHandler",
+    "timezone": "Asia/Jakarta"
+  },
+  "pinData": {},
+  "active": false
+}

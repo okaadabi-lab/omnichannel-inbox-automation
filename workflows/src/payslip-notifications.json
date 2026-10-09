@@ -1,0 +1,623 @@
+{
+  "id": "oiaPayslipNotify",
+  "name": "payslip-notifications",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 15
+            }
+          ]
+        }
+      },
+      "id": "f32b02fe-3852-4514-afb0-0577d4db1db9",
+      "name": "Every 15 Minutes",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [0, 200]
+    },
+    {
+      "parameters": {},
+      "id": "8cc42f05-f0a9-4945-a966-782abf744a84",
+      "name": "Run Manually",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [0, 400]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "%%HR_PAYROLL_BASE_URL%%/api/v1/integrations/outbox",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "after",
+              "value": "0"
+            },
+            {
+              "name": "limit",
+              "value": "50"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 15000,
+          "pagination": {
+            "pagination": {
+              "paginationMode": "updateAParameterInEachRequest",
+              "parameters": {
+                "parameters": [
+                  {
+                    "type": "qs",
+                    "name": "after",
+                    "value": "={{ $response.body.meta.next_after }}"
+                  }
+                ]
+              },
+              "paginationCompleteWhen": "other",
+              "completeExpression": "={{ $response.body.data.length < 50 }}",
+              "limitPagesFetched": true,
+              "maxRequests": 20
+            }
+          }
+        }
+      },
+      "id": "90c721d6-64c2-4b86-a70d-63c8641f3fa2",
+      "name": "Fetch Outbox",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [240, 300],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": null,
+          "name": "HR Payroll API"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000
+    },
+    {
+      "parameters": {
+        "jsCode": "@code:payslip-notifications/collect-events.js"
+      },
+      "id": "b27f62e0-bd2c-459e-ae88-a90839215b45",
+      "name": "Collect Events",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [480, 300]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "@sql:REGISTER_OUTBOX_EVENT",
+        "options": {
+          "queryBatching": "independently",
+          "queryReplacement": "={{ [$json.id, $json.type, $json.payload?.employee_id ?? null, $json.id] }}"
+        }
+      },
+      "id": "650d4f7e-fe8b-47b1-a176-56055faa103a",
+      "name": "Register Events",
+      "type": "n8n-nodes-base.mySql",
+      "typeVersion": 2.5,
+      "position": [720, 300],
+      "credentials": {
+        "mySql": {
+          "id": null,
+          "name": "Inbox MySQL"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "@code:payslip-notifications/plan-deliveries.js"
+      },
+      "id": "e11634e2-309c-4330-abb0-29d1e1839cb8",
+      "name": "Plan Deliveries",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [960, 300]
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "6d559142-57e2-4cc1-abab-eaf070c53fde",
+                    "leftValue": "={{ $json.action }}",
+                    "rightValue": "send",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "send"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "9201d6f2-d131-4cbd-add3-24a03d63928c",
+                    "leftValue": "={{ $json.action }}",
+                    "rightValue": "finalize",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "finalize"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "e5059d5e-8ccd-4f04-a0a9-5e0274a725ec",
+                    "leftValue": "={{ $json.action }}",
+                    "rightValue": "ack_only",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "ack_only"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "b62cdee1-6061-4905-aa6e-f4b81d7e2ade",
+      "name": "Route Delivery",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [1200, 300]
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "id": "b19e78dd-00d4-4d93-a8cc-432250bb64f6",
+      "name": "Loop Sends",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [1440, 140]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "@sql:COUNT_DELIVERY_ATTEMPT",
+        "options": {
+          "queryBatching": "independently",
+          "queryReplacement": "={{ [$json.event.id] }}"
+        }
+      },
+      "id": "2b912d9b-53a8-42dd-a505-008cb56f89e8",
+      "name": "Count Attempt",
+      "type": "n8n-nodes-base.mySql",
+      "typeVersion": 2.5,
+      "position": [1680, 0],
+      "credentials": {
+        "mySql": {
+          "id": null,
+          "name": "Inbox MySQL"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "%%META_GRAPH_BASE_URL%%/%%META_GRAPH_VERSION%%/%%WHATSAPP_PHONE_NUMBER_ID%%/messages",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBearerAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($('Loop Sends').item.json.send_request) }}",
+        "options": {
+          "timeout": 15000
+        }
+      },
+      "id": "c6247a15-d78f-4f25-aa5c-64beb4e2e5d9",
+      "name": "Send WhatsApp Template",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1920, 0],
+      "credentials": {
+        "httpBearerAuth": {
+          "id": null,
+          "name": "WhatsApp Cloud API"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "@code:payslip-notifications/evaluate-send.js"
+      },
+      "id": "57946792-8a8e-45d4-a487-55ba1380c095",
+      "name": "Evaluate Send",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2160, 0]
+    },
+    {
+      "parameters": {},
+      "id": "cf827e58-32c8-4ab4-a32c-fa0e84a1c186",
+      "name": "Delivery Outcomes",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [1920, 300]
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "table": {
+          "__rl": true,
+          "value": "outbox_delivery_attempts",
+          "mode": "name"
+        },
+        "dataMode": "defineBelow",
+        "columnToMatchOn": "event_id",
+        "valueToMatchOn": "={{ $json.event_id }}",
+        "valuesToSend": {
+          "values": [
+            {
+              "column": "status",
+              "value": "={{ $json.status }}"
+            },
+            {
+              "column": "last_error",
+              "value": "={{ $json.last_error }}"
+            },
+            {
+              "column": "provider_message_id",
+              "value": "={{ $json.provider_message_id }}"
+            }
+          ]
+        },
+        "options": {
+          "queryBatching": "independently"
+        }
+      },
+      "id": "1574f47e-448d-4883-aaf7-69453fed065b",
+      "name": "Save Delivery State",
+      "type": "n8n-nodes-base.mySql",
+      "typeVersion": 2.5,
+      "position": [2160, 220],
+      "credentials": {
+        "mySql": {
+          "id": null,
+          "name": "Inbox MySQL"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "6c67b8d1-b581-47c3-ad70-a32b109bce04",
+              "leftValue": "={{ Boolean($json.alert_text) }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "33df92e6-3330-4222-af96-eef556c39986",
+      "name": "Needs Ops Alert?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [2160, 400]
+    },
+    {
+      "parameters": {
+        "chatId": "%%TELEGRAM_OPS_CHAT_ID%%",
+        "text": "={{ $json.alert_text }}",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "id": "6fa3767d-f89e-46aa-a2b3-e90202e97385",
+      "name": "Alert Ops",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [2400, 400],
+      "credentials": {
+        "telegramApi": {
+          "id": null,
+          "name": "Telegram Bot"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000
+    },
+    {
+      "parameters": {
+        "jsCode": "@code:payslip-notifications/build-ack-batches.js"
+      },
+      "id": "c83b3fc6-8966-4ba4-a23b-c4edae92f975",
+      "name": "Build Ack Batches",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2160, 580]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "%%HR_PAYROLL_BASE_URL%%/api/v1/integrations/outbox/ack",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ ids: $json.ids }) }}",
+        "options": {
+          "timeout": 15000
+        }
+      },
+      "id": "15973f89-a240-4b9a-a02c-f4c40e17c888",
+      "name": "Acknowledge Events",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2400, 580],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": null,
+          "name": "HR Payroll API"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000
+    }
+  ],
+  "connections": {
+    "Every 15 Minutes": {
+      "main": [
+        [
+          {
+            "node": "Fetch Outbox",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Run Manually": {
+      "main": [
+        [
+          {
+            "node": "Fetch Outbox",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Outbox": {
+      "main": [
+        [
+          {
+            "node": "Collect Events",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Collect Events": {
+      "main": [
+        [
+          {
+            "node": "Register Events",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Register Events": {
+      "main": [
+        [
+          {
+            "node": "Plan Deliveries",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Plan Deliveries": {
+      "main": [
+        [
+          {
+            "node": "Route Delivery",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Route Delivery": {
+      "main": [
+        [
+          {
+            "node": "Loop Sends",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Delivery Outcomes",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Build Ack Batches",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Sends": {
+      "main": [
+        [
+          {
+            "node": "Delivery Outcomes",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Count Attempt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Count Attempt": {
+      "main": [
+        [
+          {
+            "node": "Send WhatsApp Template",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send WhatsApp Template": {
+      "main": [
+        [
+          {
+            "node": "Evaluate Send",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Evaluate Send": {
+      "main": [
+        [
+          {
+            "node": "Loop Sends",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Delivery Outcomes": {
+      "main": [
+        [
+          {
+            "node": "Save Delivery State",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Needs Ops Alert?",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Build Ack Batches",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Needs Ops Alert?": {
+      "main": [
+        [
+          {
+            "node": "Alert Ops",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Ack Batches": {
+      "main": [
+        [
+          {
+            "node": "Acknowledge Events",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "errorWorkflow": "oiaErrorHandler",
+    "timezone": "Asia/Jakarta"
+  },
+  "pinData": {},
+  "active": false
+}

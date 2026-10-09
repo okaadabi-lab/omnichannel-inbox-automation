@@ -154,6 +154,21 @@ test('a failed send stays unacknowledged until the last attempt', () => {
   assert.match(last.alert_text, /Attempts: 5/);
 });
 
+test('the Graph API error message is extracted from the n8n HTTP error', () => {
+  const outcome = evaluateDelivery(
+    planOutboxDelivery(payslipEvent, fresh, options),
+    {
+      error: {
+        httpCode: '500',
+        message:
+          '500 - "{\\"error\\":{\\"message\\":\\"Service temporarily unavailable\\",\\"code\\":2}}"',
+      },
+    },
+    options,
+  );
+  assert.equal(outcome.last_error, 'HTTP 500: Service temporarily unavailable');
+});
+
 test('acknowledgements are batched in groups of at most 100 unique ids', () => {
   const outcomes = [];
   for (let id = 1; id <= 230; id += 1) outcomes.push({ event_id: id, ack: id % 10 !== 0 });

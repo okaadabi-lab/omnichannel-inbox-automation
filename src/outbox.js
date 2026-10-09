@@ -146,12 +146,25 @@ function planOutboxDelivery(event, state, { maxAttempts, templates }) {
   };
 }
 
+// n8n reports HTTP failures as '500 - "<response body as a JSON string>"'. Graph API bodies
+// look like {"error":{"message":...}}, so the provider's own message is pulled out when possible.
+function providerMessage(message) {
+  const match = /^\d{3} - "(.*)"$/s.exec(message);
+  if (!match) return message;
+  try {
+    const body = JSON.parse(JSON.parse(`"${match[1]}"`));
+    return body?.error?.message ?? message;
+  } catch {
+    return message;
+  }
+}
+
 function describeSendError(response) {
   const error = response?.error;
   if (!error) return 'provider response has no message id';
   if (typeof error === 'string') return error;
   const status = error.httpCode ?? error.status ?? error.statusCode;
-  const message = error.message ?? error.description ?? 'request failed';
+  const message = providerMessage(String(error.message ?? error.description ?? 'request failed'));
   return status ? `HTTP ${status}: ${message}` : message;
 }
 

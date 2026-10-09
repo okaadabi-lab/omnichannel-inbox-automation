@@ -1,0 +1,530 @@
+{
+  "id": "oiaCommentReply",
+  "name": "instagram-comment-reply",
+  "nodes": [
+    {
+      "parameters": {
+        "inputSource": "passthrough"
+      },
+      "id": "a9cf092e-c7f9-4c10-a7dc-f9eb8b917507",
+      "name": "Comment Events",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [0, 200]
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "id": "da9e9341-51cd-4fd2-a688-86ebfc1b0995",
+      "name": "Loop Comments",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [240, 200]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "@code:instagram-comment-reply/plan-comment.js"
+      },
+      "id": "7bc38347-8fd1-4ad5-a88b-bfcff9e52266",
+      "name": "Plan Comment",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [480, 300]
+    },
+    {
+      "parameters": {
+        "operation": "insert",
+        "table": {
+          "__rl": true,
+          "value": "message_log",
+          "mode": "name"
+        },
+        "dataMode": "defineBelow",
+        "valuesToSend": {
+          "values": [
+            {
+              "column": "channel",
+              "value": "={{ $json.claim.channel }}"
+            },
+            {
+              "column": "external_message_id",
+              "value": "={{ $json.claim.external_message_id }}"
+            },
+            {
+              "column": "customer_id",
+              "value": "={{ $json.claim.customer_id }}"
+            },
+            {
+              "column": "customer_name",
+              "value": "={{ $json.claim.customer_name }}"
+            },
+            {
+              "column": "text_preview",
+              "value": "={{ $json.claim.text_preview }}"
+            },
+            {
+              "column": "received_at",
+              "value": "={{ $json.claim.received_at }}"
+            }
+          ]
+        },
+        "options": {
+          "queryBatching": "independently",
+          "skipOnConflict": true,
+          "detailedOutput": true
+        }
+      },
+      "id": "32981730-bfe4-4a86-ae03-083695b0f89e",
+      "name": "Claim Comment",
+      "type": "n8n-nodes-base.mySql",
+      "typeVersion": 2.5,
+      "position": [720, 300],
+      "credentials": {
+        "mySql": {
+          "id": null,
+          "name": "Inbox MySQL"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "cc3595c6-7583-4076-aa5e-2c6fcba0761f",
+              "leftValue": "={{ $json.data.affectedRows === 1 }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "e00f943e-b5b4-4f1c-ab6b-1f3d7ecebbeb",
+      "name": "First Delivery?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [960, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "2c9c2e7b-2cdd-450f-a33d-f3eb48028636",
+              "leftValue": "={{ $('Plan Comment').item.json.category === 'price_inquiry' }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "e9e2be53-49d4-4cc1-aabf-30c611e44e06",
+      "name": "Price Inquiry?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [1200, 200]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "@sql:RESERVE_COMMENT_REPLY_SLOT",
+        "options": {
+          "queryReplacement": "={{ [$('Plan Comment').item.json.rate_limit.scope_key, $('Plan Comment').item.json.rate_limit.window_start, $('Plan Comment').item.json.rate_limit.scope_key, $('Plan Comment').item.json.rate_limit.window_start] }}"
+        }
+      },
+      "id": "b8aed16b-18a0-4bd1-a3e6-863461ffdef6",
+      "name": "Reserve Reply Slot",
+      "type": "n8n-nodes-base.mySql",
+      "typeVersion": 2.5,
+      "position": [1440, 100],
+      "credentials": {
+        "mySql": {
+          "id": null,
+          "name": "Inbox MySQL"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "709a1513-b501-40d3-a82e-fde0cddcf887",
+              "leftValue": "={{ $json.reply_count <= $('Plan Comment').item.json.rate_limit.cap }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "000cc508-2756-427f-a8ea-0671aa767be4",
+      "name": "Under Hourly Cap?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [1680, 100]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=%%INSTAGRAM_GRAPH_BASE_URL%%/%%META_GRAPH_VERSION%%/{{ $('Plan Comment').item.json.public_reply.comment_id }}/replies",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBearerAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($('Plan Comment').item.json.public_reply.body) }}",
+        "options": {
+          "timeout": 15000
+        }
+      },
+      "id": "cde54b0d-5419-4a8f-a7a0-7c9f31430cba",
+      "name": "Reply Publicly",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1920, 0],
+      "credentials": {
+        "httpBearerAuth": {
+          "id": null,
+          "name": "Instagram API"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=%%INSTAGRAM_GRAPH_BASE_URL%%/%%META_GRAPH_VERSION%%/{{ $('Plan Comment').item.json.private_reply.account_id }}/messages",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBearerAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($('Plan Comment').item.json.private_reply.body) }}",
+        "options": {
+          "timeout": 15000
+        }
+      },
+      "id": "b64b4f9c-2abb-469d-ab5f-01c80b32b945",
+      "name": "Reply Privately",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2160, 0],
+      "credentials": {
+        "httpBearerAuth": {
+          "id": null,
+          "name": "Instagram API"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "table": {
+          "__rl": true,
+          "value": "message_log",
+          "mode": "name"
+        },
+        "dataMode": "defineBelow",
+        "columnToMatchOn": "id",
+        "valueToMatchOn": "={{ $('Claim Comment').item.json.data.insertId }}",
+        "options": {
+          "queryBatching": "independently"
+        },
+        "valuesToSend": {
+          "values": [
+            {
+              "column": "status",
+              "value": "replied"
+            },
+            {
+              "column": "action",
+              "value": "reply"
+            },
+            {
+              "column": "intent",
+              "value": "={{ $('Plan Comment').item.json.category }}"
+            },
+            {
+              "column": "reasons",
+              "value": "={{ JSON.stringify($('Plan Comment').item.json.reasons) }}"
+            },
+            {
+              "column": "reply_text",
+              "value": "={{ $('Plan Comment').item.json.public_reply.body.message }}"
+            },
+            {
+              "column": "processed_at",
+              "value": "={{ $now.toUTC().toFormat('yyyy-LL-dd HH:mm:ss.SSS') }}"
+            }
+          ]
+        }
+      },
+      "id": "bf2eefb2-3123-42d9-afc8-01bc1dd88633",
+      "name": "Log Replied",
+      "type": "n8n-nodes-base.mySql",
+      "typeVersion": 2.5,
+      "position": [2400, 100],
+      "credentials": {
+        "mySql": {
+          "id": null,
+          "name": "Inbox MySQL"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "table": {
+          "__rl": true,
+          "value": "message_log",
+          "mode": "name"
+        },
+        "dataMode": "defineBelow",
+        "columnToMatchOn": "id",
+        "valueToMatchOn": "={{ $('Claim Comment').item.json.data.insertId }}",
+        "options": {
+          "queryBatching": "independently"
+        },
+        "valuesToSend": {
+          "values": [
+            {
+              "column": "status",
+              "value": "={{ $('Plan Comment').item.json.category === 'price_inquiry' ? 'rate_limited' : 'ignored' }}"
+            },
+            {
+              "column": "action",
+              "value": "none"
+            },
+            {
+              "column": "intent",
+              "value": "={{ $('Plan Comment').item.json.category }}"
+            },
+            {
+              "column": "reasons",
+              "value": "={{ JSON.stringify($('Plan Comment').item.json.category === 'price_inquiry' ? ['hourly_reply_cap_reached'] : $('Plan Comment').item.json.reasons) }}"
+            },
+            {
+              "column": "processed_at",
+              "value": "={{ $now.toUTC().toFormat('yyyy-LL-dd HH:mm:ss.SSS') }}"
+            }
+          ]
+        }
+      },
+      "id": "05439ff8-afef-4d44-a420-e719d7accfce",
+      "name": "Log Skipped",
+      "type": "n8n-nodes-base.mySql",
+      "typeVersion": 2.5,
+      "position": [2400, 400],
+      "credentials": {
+        "mySql": {
+          "id": null,
+          "name": "Inbox MySQL"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Comment Events": {
+      "main": [
+        [
+          {
+            "node": "Loop Comments",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Comments": {
+      "main": [
+        [],
+        [
+          {
+            "node": "Plan Comment",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Plan Comment": {
+      "main": [
+        [
+          {
+            "node": "Claim Comment",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Claim Comment": {
+      "main": [
+        [
+          {
+            "node": "First Delivery?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "First Delivery?": {
+      "main": [
+        [
+          {
+            "node": "Price Inquiry?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Loop Comments",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Price Inquiry?": {
+      "main": [
+        [
+          {
+            "node": "Reserve Reply Slot",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Log Skipped",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Reserve Reply Slot": {
+      "main": [
+        [
+          {
+            "node": "Under Hourly Cap?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Under Hourly Cap?": {
+      "main": [
+        [
+          {
+            "node": "Reply Publicly",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Log Skipped",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Reply Publicly": {
+      "main": [
+        [
+          {
+            "node": "Reply Privately",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Reply Privately": {
+      "main": [
+        [
+          {
+            "node": "Log Replied",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log Replied": {
+      "main": [
+        [
+          {
+            "node": "Loop Comments",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log Skipped": {
+      "main": [
+        [
+          {
+            "node": "Loop Comments",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "errorWorkflow": "oiaErrorHandler",
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "pinData": {},
+  "active": false
+}

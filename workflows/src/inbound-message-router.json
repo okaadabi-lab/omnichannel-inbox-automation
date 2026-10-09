@@ -1,0 +1,1297 @@
+{
+  "id": "oiaInboundRouter",
+  "name": "inbound-message-router",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "GET",
+        "path": "inbox/meta",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "a15657f7-9288-4763-aa95-773818b6dbb4",
+      "name": "Meta Verification Request",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [0, 0],
+      "webhookId": "e010e631-ee5e-4e70-a6aa-4c0e21c6dac1"
+    },
+    {
+      "parameters": {
+        "action": "hash",
+        "type": "SHA256",
+        "value": "={{ $json.query['hub.verify_token'] ?? '' }}",
+        "dataPropertyName": "verify_token_sha256",
+        "encoding": "hex"
+      },
+      "id": "e216528b-2e17-4e13-aa1e-4e02f559d8af",
+      "name": "Hash Verify Token",
+      "type": "n8n-nodes-base.crypto",
+      "typeVersion": 2,
+      "position": [240, 0]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "@code:inbound-message-router/check-verify-token.js"
+      },
+      "id": "291cc07a-3d68-4d0c-aac2-90e4b998406f",
+      "name": "Check Verify Token",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [480, 0]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "8894e0d8-5441-401c-a194-c121093c342e",
+              "leftValue": "={{ $json.valid }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "8ce06a24-03b4-4726-ab0b-34e0e739991e",
+      "name": "Verify Token Valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [720, 0]
+    },
+    {
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "={{ $json.challenge }}",
+        "options": {
+          "responseCode": 200,
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "text/plain"
+              }
+            ]
+          }
+        }
+      },
+      "id": "65494438-40ae-426a-ac99-45b7cb8eec5d",
+      "name": "Return Challenge",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [960, -100]
+    },
+    {
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "verification failed",
+        "options": {
+          "responseCode": 403,
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "text/plain"
+              }
+            ]
+          }
+        }
+      },
+      "id": "88ccf707-b1dc-4f06-adb7-35972fe2c2dc",
+      "name": "Reject Verification",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [960, 100]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "inbox/meta",
+        "responseMode": "responseNode",
+        "options": {
+          "rawBody": true
+        }
+      },
+      "id": "84d16099-ed80-46bd-aa9a-b8687a16d8a8",
+      "name": "Meta Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [0, 400],
+      "webhookId": "5767b315-cc54-4e0c-ac6f-13e33d4a79a4"
+    },
+    {
+      "parameters": {
+        "action": "hmac",
+        "binaryData": true,
+        "binaryPropertyName": "data",
+        "type": "SHA256",
+        "dataPropertyName": "computed_signature",
+        "encoding": "hex"
+      },
+      "id": "b4851a09-ef84-4a2c-a5da-569559c060e0",
+      "name": "Compute Meta Signature",
+      "type": "n8n-nodes-base.crypto",
+      "typeVersion": 2,
+      "position": [240, 400],
+      "credentials": {
+        "crypto": {
+          "id": null,
+          "name": "Meta App Secret"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "@code:inbound-message-router/check-meta-signature.js"
+      },
+      "id": "413492ba-2196-4d34-a05f-4417cabc5cac",
+      "name": "Check Meta Signature",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [480, 400]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "f4789fd1-7686-4788-a866-5428b0c3cc9f",
+              "leftValue": "={{ $json.valid }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "5007b84c-bb2f-44fb-a399-d069b6354d76",
+      "name": "Meta Signature Valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [720, 400]
+    },
+    {
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "EVENT_RECEIVED",
+        "options": {
+          "responseCode": 200,
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "text/plain"
+              }
+            ]
+          }
+        }
+      },
+      "id": "8f2fc301-790c-4bd9-a801-c466414b2977",
+      "name": "Acknowledge Meta",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [960, 300]
+    },
+    {
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "invalid signature",
+        "options": {
+          "responseCode": 401,
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "text/plain"
+              }
+            ]
+          }
+        }
+      },
+      "id": "58a7d579-4fb9-4389-a1b7-fd8f3ebdcbf4",
+      "name": "Reject Meta Request",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [960, 500]
+    },
+    {
+      "parameters": {
+        "jsCode": "@code:inbound-message-router/extract-meta-messages.js"
+      },
+      "id": "68bb1720-c7b9-489d-a3c1-2cc0611d7800",
+      "name": "Extract Meta Messages",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1200, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "@code:inbound-message-router/extract-instagram-comments.js"
+      },
+      "id": "c0238220-7cdf-45a8-ac1c-9ba8196b6e0a",
+      "name": "Extract Instagram Comments",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1200, 120]
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "oiaCommentReply",
+          "mode": "id"
+        },
+        "mode": "once",
+        "options": {
+          "waitForSubWorkflow": false
+        }
+      },
+      "id": "18d9d4a6-5be7-4a5c-abfd-1b327216a210",
+      "name": "Hand Off Comments",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [1440, 120]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "inbox/telegram",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "f467ae41-c441-4343-ad0a-8418befd85ac",
+      "name": "Telegram Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [0, 800],
+      "webhookId": "f0cd97ae-a16c-45bc-adb5-4b6b22deb663"
+    },
+    {
+      "parameters": {
+        "action": "hash",
+        "type": "SHA256",
+        "value": "={{ $json.headers['x-telegram-bot-api-secret-token'] ?? '' }}",
+        "dataPropertyName": "secret_sha256",
+        "encoding": "hex"
+      },
+      "id": "610423a6-a2b1-47bb-a6cd-52464137793d",
+      "name": "Hash Telegram Secret",
+      "type": "n8n-nodes-base.crypto",
+      "typeVersion": 2,
+      "position": [240, 800]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "@code:inbound-message-router/check-telegram-secret.js"
+      },
+      "id": "34b4269b-1189-48c4-a87d-7b2417e3fe79",
+      "name": "Check Telegram Secret",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [480, 800]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "399d84e7-eb6d-419f-aa92-3b5cfb416695",
+              "leftValue": "={{ $json.valid }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "151c0926-ce4f-4184-a2c1-26eeb28508ba",
+      "name": "Telegram Secret Valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [720, 800]
+    },
+    {
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "ok",
+        "options": {
+          "responseCode": 200,
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "text/plain"
+              }
+            ]
+          }
+        }
+      },
+      "id": "abe893d7-a228-4352-afa1-6e95ba2042a9",
+      "name": "Acknowledge Telegram",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [960, 700]
+    },
+    {
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "invalid secret token",
+        "options": {
+          "responseCode": 401,
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "text/plain"
+              }
+            ]
+          }
+        }
+      },
+      "id": "6383b05b-7ef5-4b43-a9c9-681247a4d15c",
+      "name": "Reject Telegram Request",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [960, 900]
+    },
+    {
+      "parameters": {
+        "jsCode": "@code:inbound-message-router/extract-telegram-message.js"
+      },
+      "id": "1e436c6d-df15-4b45-a057-65d0e340ecc4",
+      "name": "Extract Telegram Message",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1200, 700]
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "id": "2dfb2d72-8364-4ad7-a33a-f23d52e31370",
+      "name": "Loop Messages",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [1440, 500]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "@code:inbound-message-router/prepare-message.js"
+      },
+      "id": "cbc6f880-03c9-4e37-adaa-a643b06f38f7",
+      "name": "Prepare Message",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1680, 600]
+    },
+    {
+      "parameters": {
+        "operation": "insert",
+        "table": {
+          "__rl": true,
+          "value": "message_log",
+          "mode": "name"
+        },
+        "dataMode": "defineBelow",
+        "valuesToSend": {
+          "values": [
+            {
+              "column": "channel",
+              "value": "={{ $json.claim.channel }}"
+            },
+            {
+              "column": "external_message_id",
+              "value": "={{ $json.claim.external_message_id }}"
+            },
+            {
+              "column": "customer_id",
+              "value": "={{ $json.claim.customer_id }}"
+            },
+            {
+              "column": "customer_name",
+              "value": "={{ $json.claim.customer_name }}"
+            },
+            {
+              "column": "text_preview",
+              "value": "={{ $json.claim.text_preview }}"
+            },
+            {
+              "column": "received_at",
+              "value": "={{ $json.claim.received_at }}"
+            }
+          ]
+        },
+        "options": {
+          "queryBatching": "independently",
+          "skipOnConflict": true,
+          "detailedOutput": true
+        }
+      },
+      "id": "3fbbb080-9ee5-434c-a554-3a478e7c8f64",
+      "name": "Claim Message",
+      "type": "n8n-nodes-base.mySql",
+      "typeVersion": 2.5,
+      "position": [1920, 600],
+      "credentials": {
+        "mySql": {
+          "id": null,
+          "name": "Inbox MySQL"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "2e331387-f47a-4f6d-a7c9-253a92f07a42",
+              "leftValue": "={{ $json.data.affectedRows === 1 }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "13156dfa-9d20-4ec6-ac34-5f0079dd6664",
+      "name": "First Delivery?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [2160, 600]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "%%AI_SUPPORT_BASE_URL%%/v1/messages",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBearerAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($('Prepare Message').item.json.ai_request) }}",
+        "options": {
+          "timeout": 100000
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Request-Id",
+              "value": "=n8n-{{ $execution.id }}"
+            }
+          ]
+        }
+      },
+      "id": "864566c5-e652-4116-a944-0017821caa4f",
+      "name": "Ask AI Support",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2400, 500],
+      "credentials": {
+        "httpBearerAuth": {
+          "id": null,
+          "name": "AI Support Service"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "@code:inbound-message-router/plan-actions.js"
+      },
+      "id": "4c10893c-968b-4196-aa0b-1787589e7ffe",
+      "name": "Plan Actions",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2640, 500]
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "c77e5ba6-175e-4d3e-a59f-e6652821eb9b",
+                    "leftValue": "={{ $json.action }}",
+                    "rightValue": "reply",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "reply"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "464e3ecf-54cf-4e83-af19-2ec3c9ec0d8f",
+                    "leftValue": "={{ $json.action }}",
+                    "rightValue": "escalate",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "escalate"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "24c6d857-e96b-4d0d-acfb-aec72c6b5fed",
+                    "leftValue": "={{ $json.action }}",
+                    "rightValue": "none",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "none"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "4faaff0f-6ad5-4014-a7c3-89d3c148d4d3",
+      "name": "Route by Action",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [2880, 500]
+    },
+    {
+      "parameters": {
+        "chatId": "%%TELEGRAM_ADMIN_CHAT_ID%%",
+        "text": "={{ $('Plan Actions').item.json.admin_alert_text }}",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "id": "67056c02-5a1c-4286-acb2-5d48a2104ebb",
+      "name": "Alert Admin Group",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [3120, 660],
+      "credentials": {
+        "telegramApi": {
+          "id": null,
+          "name": "Telegram Bot"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "4d22a581-b2e2-4004-ad3c-53c709e818c8",
+                    "leftValue": "={{ $('Plan Actions').item.json.channel }}",
+                    "rightValue": "whatsapp",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "whatsapp"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "5c602359-27c1-473c-af5f-520603d45007",
+                    "leftValue": "={{ $('Plan Actions').item.json.channel }}",
+                    "rightValue": "instagram",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "instagram"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "bc665ae4-1639-46ac-a033-069da366c1e7",
+                    "leftValue": "={{ $('Plan Actions').item.json.channel }}",
+                    "rightValue": "telegram",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "telegram"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "4f646467-2383-4fc3-a79c-b5e12473a01d",
+      "name": "Route by Channel",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [3360, 440]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=%%META_GRAPH_BASE_URL%%/%%META_GRAPH_VERSION%%/{{ $('Plan Actions').item.json.send.path_id }}/messages",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBearerAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($('Plan Actions').item.json.send.body) }}",
+        "options": {
+          "timeout": 15000
+        }
+      },
+      "id": "f9050a9a-1e0d-4d95-aec2-0b37bc91cef4",
+      "name": "Send WhatsApp Reply",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [3600, 240],
+      "credentials": {
+        "httpBearerAuth": {
+          "id": null,
+          "name": "WhatsApp Cloud API"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=%%INSTAGRAM_GRAPH_BASE_URL%%/%%META_GRAPH_VERSION%%/{{ $('Plan Actions').item.json.send.path_id }}/messages",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBearerAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($('Plan Actions').item.json.send.body) }}",
+        "options": {
+          "timeout": 15000
+        }
+      },
+      "id": "7b9694e8-57ee-4c9f-aff8-8a6e63693c00",
+      "name": "Send Instagram Reply",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [3600, 440],
+      "credentials": {
+        "httpBearerAuth": {
+          "id": null,
+          "name": "Instagram API"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $('Plan Actions').item.json.send.chat_id }}",
+        "text": "={{ $('Plan Actions').item.json.send.text }}",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "id": "7cb838a9-62a0-424e-aad0-02ccbec1d549",
+      "name": "Send Telegram Reply",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [3600, 640],
+      "credentials": {
+        "telegramApi": {
+          "id": null,
+          "name": "Telegram Bot"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "table": {
+          "__rl": true,
+          "value": "message_log",
+          "mode": "name"
+        },
+        "dataMode": "defineBelow",
+        "columnToMatchOn": "id",
+        "valueToMatchOn": "={{ $('Plan Actions').item.json.log.id }}",
+        "valuesToSend": {
+          "values": [
+            {
+              "column": "status",
+              "value": "={{ $('Plan Actions').item.json.log.status }}"
+            },
+            {
+              "column": "action",
+              "value": "={{ $('Plan Actions').item.json.log.action }}"
+            },
+            {
+              "column": "intent",
+              "value": "={{ $('Plan Actions').item.json.log.intent }}"
+            },
+            {
+              "column": "confidence",
+              "value": "={{ $('Plan Actions').item.json.log.confidence }}"
+            },
+            {
+              "column": "reasons",
+              "value": "={{ $('Plan Actions').item.json.log.reasons }}"
+            },
+            {
+              "column": "conversation_id",
+              "value": "={{ $('Plan Actions').item.json.log.conversation_id }}"
+            },
+            {
+              "column": "reply_text",
+              "value": "={{ $('Plan Actions').item.json.log.reply_text }}"
+            },
+            {
+              "column": "processed_at",
+              "value": "={{ $('Plan Actions').item.json.log.processed_at }}"
+            }
+          ]
+        },
+        "options": {
+          "queryBatching": "independently"
+        }
+      },
+      "id": "e258ec02-a88d-43c9-ab2f-b459ed900ffe",
+      "name": "Log Outcome",
+      "type": "n8n-nodes-base.mySql",
+      "typeVersion": 2.5,
+      "position": [3840, 800],
+      "credentials": {
+        "mySql": {
+          "id": null,
+          "name": "Inbox MySQL"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Meta Verification Request": {
+      "main": [
+        [
+          {
+            "node": "Hash Verify Token",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Hash Verify Token": {
+      "main": [
+        [
+          {
+            "node": "Check Verify Token",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Verify Token": {
+      "main": [
+        [
+          {
+            "node": "Verify Token Valid?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Verify Token Valid?": {
+      "main": [
+        [
+          {
+            "node": "Return Challenge",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Reject Verification",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Meta Webhook": {
+      "main": [
+        [
+          {
+            "node": "Compute Meta Signature",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Compute Meta Signature": {
+      "main": [
+        [
+          {
+            "node": "Check Meta Signature",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Meta Signature": {
+      "main": [
+        [
+          {
+            "node": "Meta Signature Valid?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Meta Signature Valid?": {
+      "main": [
+        [
+          {
+            "node": "Acknowledge Meta",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Reject Meta Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Acknowledge Meta": {
+      "main": [
+        [
+          {
+            "node": "Extract Meta Messages",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Extract Instagram Comments",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Instagram Comments": {
+      "main": [
+        [
+          {
+            "node": "Hand Off Comments",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Telegram Webhook": {
+      "main": [
+        [
+          {
+            "node": "Hash Telegram Secret",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Hash Telegram Secret": {
+      "main": [
+        [
+          {
+            "node": "Check Telegram Secret",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Telegram Secret": {
+      "main": [
+        [
+          {
+            "node": "Telegram Secret Valid?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Telegram Secret Valid?": {
+      "main": [
+        [
+          {
+            "node": "Acknowledge Telegram",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Reject Telegram Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Acknowledge Telegram": {
+      "main": [
+        [
+          {
+            "node": "Extract Telegram Message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Meta Messages": {
+      "main": [
+        [
+          {
+            "node": "Loop Messages",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Telegram Message": {
+      "main": [
+        [
+          {
+            "node": "Loop Messages",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Messages": {
+      "main": [
+        [],
+        [
+          {
+            "node": "Prepare Message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Message": {
+      "main": [
+        [
+          {
+            "node": "Claim Message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Claim Message": {
+      "main": [
+        [
+          {
+            "node": "First Delivery?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "First Delivery?": {
+      "main": [
+        [
+          {
+            "node": "Ask AI Support",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Loop Messages",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ask AI Support": {
+      "main": [
+        [
+          {
+            "node": "Plan Actions",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Plan Actions": {
+      "main": [
+        [
+          {
+            "node": "Route by Action",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Route by Action": {
+      "main": [
+        [
+          {
+            "node": "Route by Channel",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Alert Admin Group",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Log Outcome",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Alert Admin Group": {
+      "main": [
+        [
+          {
+            "node": "Route by Channel",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Route by Channel": {
+      "main": [
+        [
+          {
+            "node": "Send WhatsApp Reply",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Send Instagram Reply",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Send Telegram Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send WhatsApp Reply": {
+      "main": [
+        [
+          {
+            "node": "Log Outcome",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Instagram Reply": {
+      "main": [
+        [
+          {
+            "node": "Log Outcome",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Telegram Reply": {
+      "main": [
+        [
+          {
+            "node": "Log Outcome",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log Outcome": {
+      "main": [
+        [
+          {
+            "node": "Loop Messages",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "errorWorkflow": "oiaErrorHandler"
+  },
+  "pinData": {},
+  "active": false
+}
