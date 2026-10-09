@@ -153,7 +153,7 @@ test('validation rejects environment access, SQL built from expressions and dang
   );
   assert.match(
     withChange('payslip-notifications.json', (w) => {
-      node(w, 'Count Attempt').parameters.query += ' AND event_type = "{{ $json.type }}"';
+      node(w, 'Claim Send').parameters.query += ' AND event_type = "{{ $json.type }}"';
     }).join('\n'),
     /builds SQL from an expression/,
   );

@@ -123,6 +123,12 @@ test('an event that already used every attempt is given up without another send'
   assert.match(plan.alert_text, /Attempts: 5/);
 });
 
+test('an event another run is sending is left to the claim, not given up', () => {
+  const plan = planOutboxDelivery(payslipEvent, { attempts: 5, status: 'sending' }, options);
+  assert.equal(plan.action, 'send');
+  assert.equal(plan.attempts, 5);
+});
+
 test('a WhatsApp message id means delivered and acknowledged', () => {
   const plan = planOutboxDelivery(payslipEvent, fresh, options);
   const outcome = evaluateDelivery(

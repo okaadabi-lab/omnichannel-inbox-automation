@@ -107,8 +107,9 @@ test(
       const [, first] = await register(41);
       assert.deepEqual(first, [{ event_id: 41, attempts: 0, status: 'pending' }]);
 
-      await run(sql.COUNT_DELIVERY_ATTEMPT, [41]);
-      await run(sql.COUNT_DELIVERY_ATTEMPT, [41]);
+      await run(sql.CLAIM_DELIVERY_ATTEMPT, [41]);
+      await db.query("UPDATE outbox_delivery_attempts SET status = 'failed' WHERE event_id = 41");
+      await run(sql.CLAIM_DELIVERY_ATTEMPT, [41]);
       await db.query("UPDATE outbox_delivery_attempts SET status = 'failed' WHERE event_id = 41");
 
       const [, again] = await register(41);
@@ -118,6 +119,35 @@ test(
         'SELECT last_attempt_at FROM outbox_delivery_attempts WHERE event_id = 41',
       );
       assert.ok(row.last_attempt_at instanceof Date);
+    });
+
+    await t.test('only one run can claim an event for sending', async () => {
+      const claim = async (id) => (await run(sql.CLAIM_DELIVERY_ATTEMPT, [id])).affectedRows;
+      const state = async (id) => {
+        const [[row]] = await db.query(
+          'SELECT attempts, status FROM outbox_delivery_attempts WHERE event_id = ?',
+          [id],
+        );
+        return { ...row };
+      };
+      const setStatus = (id, status) =>
+        db.query('UPDATE outbox_delivery_attempts SET status = ? WHERE event_id = ?', [status, id]);
+      await run(sql.REGISTER_OUTBOX_EVENT, [51, 'payroll.paid', 2, 51]);
+
+      assert.equal(await claim(51), 1);
+      assert.deepEqual(await state(51), { attempts: 1, status: 'sending' });
+      assert.equal(await claim(51), 0, 'a second run must not send while the first is sending');
+
+      await setStatus(51, 'failed');
+      assert.equal(await claim(51), 1, 'a failed send is retried by the next run');
+      await setStatus(51, 'delivered');
+      assert.equal(await claim(51), 0, 'a delivered event is never sent again');
+      assert.deepEqual(await state(51), { attempts: 2, status: 'delivered' });
+
+      await db.query(
+        "UPDATE outbox_delivery_attempts SET status = 'sending', last_attempt_at = UTC_TIMESTAMP(3) - INTERVAL 3 HOUR WHERE event_id = 51",
+      );
+      assert.equal(await claim(51), 1, 'a claim left by a crashed run expires');
     });
   },
 );

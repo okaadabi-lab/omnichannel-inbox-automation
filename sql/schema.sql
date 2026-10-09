@@ -46,7 +46,7 @@ CREATE TABLE IF NOT EXISTS outbox_delivery_attempts (
   event_type VARCHAR(64) NOT NULL,
   employee_id BIGINT UNSIGNED NULL,
   attempts SMALLINT UNSIGNED NOT NULL DEFAULT 0,
-  status ENUM('pending', 'delivered', 'failed', 'undeliverable', 'gave_up', 'skipped')
+  status ENUM('pending', 'sending', 'delivered', 'failed', 'undeliverable', 'gave_up', 'skipped')
     NOT NULL DEFAULT 'pending',
   last_error VARCHAR(500) NULL,
   provider_message_id VARCHAR(128) NULL,

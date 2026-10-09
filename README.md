@@ -78,8 +78,10 @@ Meta delivers Instagram DMs and comments to the same callback URL, so the router
 
 ```mermaid
 flowchart LR
-  T["every 15 min"] --> GET["GET /api/v1/integrations/outbox?after=0&limit=50 (paged)"] --> REG["register events in outbox_delivery_attempts"] --> PLAN{"plan per event"}
-  PLAN -- send --> CNT["attempts + 1"] --> WA["WhatsApp template message"] --> EVAL{"message id?"}
+  T["every 15 min"] --> GET["GET /api/v1/integrations/outbox?after=0&limit=50 (2 pages max)"] --> REG["register events in outbox_delivery_attempts"] --> PLAN{"plan per event"}
+  PLAN -- send --> CLAIM["claim: attempts + 1, status sending"] --> OWN{"claimed?"}
+  OWN -- "no: another run is sending it" --> LEAVE["leave it"]
+  OWN -- yes --> WA["WhatsApp template message"] --> EVAL{"message id?"}
   EVAL -- yes --> DEL["delivered: ack"]
   EVAL -- "no, attempts left" --> FAIL["failed: no ack, retry next run"]
   EVAL -- "no, 5th attempt" --> GIVE["gave_up: alert ops, ack"]
@@ -94,6 +96,8 @@ flowchart LR
 Messages to employees are business-initiated, so WhatsApp only accepts them as **pre-approved message templates**; free-form text is rejected outside the 24-hour customer service window. The workflow uses two templates (`payslip_ready` with name, period and link; `salary_paid` with name, period and amount) that must be created and approved in WhatsApp Manager first.
 
 The outbox is at-least-once. Every event id gets a row in `outbox_delivery_attempts` before anything is sent, so an event that was delivered but whose acknowledgement failed is only acknowledged again on the next run, not sent twice. Failed sends stay unacknowledged and come back on the next run. The fifth failed attempt, an employee without a phone number and an invalid payload are terminal: ops gets an alert and the event is acknowledged, so it does not return every 15 minutes forever.
+
+Two runs can overlap when WhatsApp is slow, and n8n has no per-workflow concurrency limit outside queue mode. Before each send the run claims the event with a conditional `UPDATE`, and only the run that changed the row sends. A run takes at most 100 events, so it ends well within the two hours after which a claim left behind by a crashed run expires.
 
 ## Canonical message
 
@@ -227,7 +231,7 @@ TEST_MYSQL_URL=mysql://user:pass@127.0.0.1:3306/inbox_automation_test npm test
 - Telegram with and without the secret token, an Instagram DM,
 - comment rules including the hourly cap,
 - a failing AI call retried three times, then the error workflow alert,
-- two payroll runs: only delivered and terminal ids acknowledged, the failed event retried and nothing sent twice.
+- two payroll runs: only delivered and terminal ids acknowledged, the failed event retried, an event claimed by another run left alone, nothing sent twice.
 
 ```bash
 N8N_BIN=/path/to/node_modules/.bin/n8n \
@@ -269,7 +273,7 @@ A channel is a normaliser and a sender: add `src/normalize-<channel>.js` returni
 - Handing a conversation back to the bot (`POST /v1/conversations/:id/handoff`) is left to the agent; there is no agent inbox here.
 - A failure stops the remaining messages of the same webhook delivery. They are not lost (the execution can be retried), but they wait.
 - Rows that stay `processing` after a failure are found by query; a sweeper workflow that reports them daily would be the next step.
-- Payroll sends are at least once: a crash after the WhatsApp API accepted a message but before its state was saved sends it again on the next run.
+- Payroll sends are at least once: if n8n crashes during a run, the messages that run already sent are sent again once their claims expire.
 - `comment_reply_counter` rows are never pruned.
 - The compose file runs the n8n task runner in internal mode, which n8n 2.x marks as deprecated in favour of a separate runner container.
 

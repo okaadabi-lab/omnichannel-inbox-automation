@@ -110,7 +110,7 @@ function finalOutcome(event, status, reason, attempts, alert) {
 }
 
 // Decides what to do with one outbox event, given its row in outbox_delivery_attempts:
-// - send: deliver a WhatsApp template (send_request), evaluated afterwards
+// - send: claim the event, deliver a WhatsApp template (send_request), evaluate the result
 // - finalize: record a terminal status, alert ops if needed, then acknowledge
 // - ack_only: already handled in an earlier run whose acknowledgement did not go through
 function planOutboxDelivery(event, state, { maxAttempts, templates }) {
@@ -129,7 +129,9 @@ function planOutboxDelivery(event, state, { maxAttempts, templates }) {
   if (problem) {
     return { action: 'finalize', ...finalOutcome(event, 'undeliverable', problem, attempts, true) };
   }
-  if (attempts >= maxAttempts) {
+  // A 'sending' row may belong to a run that is still waiting for WhatsApp; the claim before
+  // the send decides whether this run may touch it, so it is not given up here.
+  if (attempts >= maxAttempts && state?.status !== 'sending') {
     const reason = 'maximum attempts reached';
     return { action: 'finalize', ...finalOutcome(event, 'gave_up', reason, attempts, true) };
   }

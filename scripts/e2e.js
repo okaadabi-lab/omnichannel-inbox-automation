@@ -118,6 +118,12 @@ function payrollEvents() {
       occurred_at: '2026-10-01T03:00:03Z',
       payload: payload(14, 'Eko Prasetyo', `+${FAILING_PHONE}`),
     },
+    {
+      id: 5,
+      type: 'payslip.published',
+      occurred_at: '2026-10-01T03:00:04Z',
+      payload: payload(15, 'Fajar Nugroho', '+62812000015'),
+    },
   ];
 }
 
@@ -185,9 +191,10 @@ async function main() {
       'DROP TABLE IF EXISTS message_log, comment_reply_counter, outbox_delivery_attempts',
     );
     await connection.query(fs.readFileSync(path.join(ROOT, 'sql', 'schema.sql'), 'utf8'));
-    // Event 4 has already failed four times in earlier runs.
+    // Event 4 has already failed four times in earlier runs. Event 5 is being sent right now
+    // by another, overlapping run, so this run must leave it alone.
     await connection.query(
-      "INSERT INTO outbox_delivery_attempts (event_id, event_type, employee_id, attempts, status) VALUES (4, 'payroll.paid', 14, 4, 'failed')",
+      "INSERT INTO outbox_delivery_attempts (event_id, event_type, employee_id, attempts, status, last_attempt_at) VALUES (4, 'payroll.paid', 14, 4, 'failed', NULL), (5, 'payslip.published', 15, 1, 'sending', UTC_TIMESTAMP(3))",
     );
 
     const envFile = path.join(workDir, 'e2e.env');
@@ -313,8 +320,10 @@ async function testPayroll({ n8nBin, env, logFile, services, connection }) {
       [2, 1, 'failed'],
       [3, 0, 'undeliverable'],
       [4, 5, 'gave_up'],
+      [5, 1, 'sending'],
     ],
   );
+  assert.equal(whatsappSends().filter((r) => r.body.to === '62812000015').length, 0);
   assert.match(rows[0].provider_message_id, /^wamid\.MOCK/);
 
   const first = whatsappSends().find((r) => r.body.to === '62812000011');
@@ -333,7 +342,7 @@ async function testPayroll({ n8nBin, env, logFile, services, connection }) {
     ),
   );
   step(
-    'payroll run: delivered #1, kept failed #2 unacked, alerted and acked #3 (no phone) and #4 (5th attempt)',
+    'payroll run: delivered #1, kept failed #2 unacked, alerted and acked #3 (no phone) and #4 (5th attempt), left #5 to the run sending it',
   );
 
   const sendsBefore = whatsappSends().length;

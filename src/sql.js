@@ -30,10 +30,14 @@ const REGISTER_OUTBOX_EVENT = [
   ),
 ].join(';\n');
 
-const COUNT_DELIVERY_ATTEMPT = statements(
+// Two runs of the payroll workflow can overlap when one is slow. Only the run whose UPDATE
+// changes the row sends the message. A row stays 'sending' until its run saves the outcome;
+// after two hours (much longer than a run can take) it is treated as a crashed run.
+const CLAIM_DELIVERY_ATTEMPT = statements(
   'UPDATE outbox_delivery_attempts',
-  'SET attempts = attempts + 1, last_attempt_at = UTC_TIMESTAMP(3)',
-  'WHERE event_id = $1',
+  "SET attempts = attempts + 1, status = 'sending', last_attempt_at = UTC_TIMESTAMP(3)",
+  "WHERE event_id = $1 AND (status IN ('pending', 'failed')",
+  "OR (status = 'sending' AND last_attempt_at < UTC_TIMESTAMP(3) - INTERVAL 2 HOUR))",
 );
 
-module.exports = { RESERVE_COMMENT_REPLY_SLOT, REGISTER_OUTBOX_EVENT, COUNT_DELIVERY_ATTEMPT };
+module.exports = { RESERVE_COMMENT_REPLY_SLOT, REGISTER_OUTBOX_EVENT, CLAIM_DELIVERY_ATTEMPT };

@@ -63,7 +63,7 @@
               "paginationCompleteWhen": "other",
               "completeExpression": "={{ $response.body.data.length < 50 }}",
               "limitPagesFetched": true,
-              "maxRequests": 20
+              "maxRequests": 2
             }
           }
         }
@@ -224,14 +224,15 @@
     {
       "parameters": {
         "operation": "executeQuery",
-        "query": "@sql:COUNT_DELIVERY_ATTEMPT",
+        "query": "@sql:CLAIM_DELIVERY_ATTEMPT",
         "options": {
           "queryBatching": "independently",
-          "queryReplacement": "={{ [$json.event.id] }}"
+          "queryReplacement": "={{ [$json.event.id] }}",
+          "detailedOutput": true
         }
       },
       "id": "2b912d9b-53a8-42dd-a505-008cb56f89e8",
-      "name": "Count Attempt",
+      "name": "Claim Send",
       "type": "n8n-nodes-base.mySql",
       "typeVersion": 2.5,
       "position": [1680, 0],
@@ -241,6 +242,37 @@
           "name": "Inbox MySQL"
         }
       }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "5f0e7c1a-9d2b-4e8f-a1c3-7b6d2e9f0a14",
+              "leftValue": "={{ $json.data.affectedRows === 1 }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "0c4a8e2f-6b1d-4f3a-9e7c-2d5b8a1f6e30",
+      "name": "Claimed?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [1920, 0]
     },
     {
       "parameters": {
@@ -259,7 +291,7 @@
       "name": "Send WhatsApp Template",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [1920, 0],
+      "position": [2160, -80],
       "credentials": {
         "httpBearerAuth": {
           "id": null,
@@ -280,14 +312,37 @@
       "name": "Evaluate Send",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [2160, 0]
+      "position": [2400, -80]
     },
     {
-      "parameters": {},
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "9a3e5d71-2c84-4b6f-8e0a-4f1c7b3d9e52",
+              "leftValue": "={{ Boolean($json.status) }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
       "id": "cf827e58-32c8-4ab4-a32c-fa0e84a1c186",
-      "name": "Delivery Outcomes",
-      "type": "n8n-nodes-base.noOp",
-      "typeVersion": 1,
+      "name": "Keep Outcomes",
+      "type": "n8n-nodes-base.filter",
+      "typeVersion": 2.2,
       "position": [1920, 300]
     },
     {
@@ -505,7 +560,7 @@
         ],
         [
           {
-            "node": "Delivery Outcomes",
+            "node": "Keep Outcomes",
             "type": "main",
             "index": 0
           }
@@ -523,25 +578,43 @@
       "main": [
         [
           {
-            "node": "Delivery Outcomes",
+            "node": "Keep Outcomes",
             "type": "main",
             "index": 0
           }
         ],
         [
           {
-            "node": "Count Attempt",
+            "node": "Claim Send",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Count Attempt": {
+    "Claim Send": {
+      "main": [
+        [
+          {
+            "node": "Claimed?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Claimed?": {
       "main": [
         [
           {
             "node": "Send WhatsApp Template",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Loop Sends",
             "type": "main",
             "index": 0
           }
@@ -570,7 +643,7 @@
         ]
       ]
     },
-    "Delivery Outcomes": {
+    "Keep Outcomes": {
       "main": [
         [
           {
