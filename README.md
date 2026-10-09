@@ -2,7 +2,7 @@
 
 n8n workflows that bring WhatsApp, Instagram and Telegram messages into one pipeline: signature-verified webhooks, normalisation, AI triage through an external service, human escalation, retries and logging.
 
-[![CI](https://github.com/__GITHUB_USER__/omnichannel-inbox-automation/actions/workflows/ci.yml/badge.svg)](https://github.com/__GITHUB_USER__/omnichannel-inbox-automation/actions/workflows/ci.yml)
+[![CI](https://github.com/okaadabi-lab/omnichannel-inbox-automation/actions/workflows/ci.yml/badge.svg)](https://github.com/okaadabi-lab/omnichannel-inbox-automation/actions/workflows/ci.yml)
 
 > Portfolio project. All data in this repository is fictional sample data.
 
@@ -16,7 +16,7 @@ A small service business gets customer messages on three channels and payroll no
 - Workflow JSON is generated from templates, checked by a validator and imported unchanged into n8n.
 - An end-to-end harness runs the built workflows in a real n8n instance against mock services.
 
-The workflows call two companion portfolio services over HTTP: [ai-support-service](https://github.com/__GITHUB_USER__/ai-support-service) (decides whether to reply, escalate or stay silent) and [hr-payroll-api](https://github.com/__GITHUB_USER__/hr-payroll-api) (publishes payroll events through an outbox).
+The workflows call two companion portfolio services over HTTP: [ai-support-service](https://github.com/okaadabi-lab/ai-support-service) (decides whether to reply, escalate or stay silent) and [hr-payroll-api](https://github.com/okaadabi-lab/hr-payroll-api) (publishes payroll events through an outbox).
 
 ## Workflows
 
@@ -155,7 +155,7 @@ Two n8n-specific rules (how the MySQL node binds parameters, and why Telegram me
 
 ## Part of a portfolio
 
-This repository is the integration point of the set. It calls [ai-support-service](https://github.com/__GITHUB_USER__/ai-support-service) for every inbound customer message and polls the payroll outbox of [hr-payroll-api](https://github.com/__GITHUB_USER__/hr-payroll-api) to send payslip notifications.
+This repository is the integration point of the set. It calls [ai-support-service](https://github.com/okaadabi-lab/ai-support-service) for every inbound customer message and polls the payroll outbox of [hr-payroll-api](https://github.com/okaadabi-lab/hr-payroll-api) to send payslip notifications.
 
 ## License
 
