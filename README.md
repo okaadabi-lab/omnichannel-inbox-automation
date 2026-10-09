@@ -54,7 +54,7 @@ flowchart LR
   SEND --> LOG --> LOOP
 ```
 
-Meta retries any webhook that does not get a quick 200, for days. The router therefore answers as soon as the signature is verified (a few milliseconds of work) and does the slow part afterwards: the AI call can take tens of seconds when the service has to retry its LLM. The end-to-end test checks this with an AI mock that takes 4 seconds; Meta's request still returns in about half a second. The cost of answering first is that Meta can no longer help with recovery, so failures after the 200 are handled by retries inside n8n and by the error workflow (see [Failure handling](#failure-handling)).
+Meta retries any webhook that does not get a quick 200, for days. The router therefore answers as soon as the signature is verified (a few milliseconds of work) and does the slow part afterwards: the AI call can take tens of seconds when the service has to retry its LLM. The end-to-end test checks this with an AI mock that takes 4 seconds; Meta's request still returns in well under a second. The cost of answering first is that Meta can no longer help with recovery, so failures after the 200 are handled by retries inside n8n and by the error workflow (see [Failure handling](#failure-handling)).
 
 The webhook is answered from the same execution with a Respond to Webhook node, so there is no second workflow or queue to operate.
 
@@ -121,7 +121,7 @@ The request to ai-support-service is the canonical message without `reply_target
 
 | What happens                                    | Behaviour                                                                                                                                                                                                                                                                         |
 | ----------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Bad or missing Meta signature                   | `401`, nothing is parsed or stored. The HMAC covers the raw request bytes, not re-serialised JSON. A wrong Telegram `secret_token` also gets `401`; a wrong verify token on the GET handshake gets `403`.                                                                         |
+| Bad or missing Meta signature                   | `401`, nothing is processed or stored. The HMAC covers the raw request bytes, not re-serialised JSON. A wrong Telegram `secret_token` also gets `401`; a wrong verify token on the GET handshake gets `403`.                                                                      |
 | Duplicate webhook (Meta or Telegram redelivers) | Answered `200`. The insert into `message_log` hits the unique `(channel, external_message_id)` key and the message is skipped before the AI call. ai-support-service is also idempotent on the same key.                                                                          |
 | ai-support-service down or slow                 | 100 s timeout, 3 tries 5 s apart with the same `external_message_id` (safe because the service is idempotent). Then the execution fails, the error workflow alerts ops with the execution link, and the `message_log` row stays `processing`. Fix and retry the execution in n8n. |
 | ai-support-service answers 4xx                  | Same path: n8n retries every error the same way, so a bad API key surfaces as an ops alert after three tries.                                                                                                                                                                     |
@@ -178,7 +178,7 @@ Credentials are referenced by name only, and the import links each node to the e
 
 ### Settings (`.env`)
 
-Non-secret values that `scripts/build.js` bakes into the workflow JSON and validates: `AI_SUPPORT_BASE_URL`, `HR_PAYROLL_BASE_URL`, `META_GRAPH_BASE_URL`, `INSTAGRAM_GRAPH_BASE_URL`, `META_GRAPH_VERSION`, `WHATSAPP_PHONE_NUMBER_ID` (sender for payroll messages), `WHATSAPP_TEMPLATE_LANGUAGE`, `PAYSLIP_TEMPLATE_NAME`, `PAYROLL_PAID_TEMPLATE_NAME`, `OUTBOX_MAX_ATTEMPTS`, `TELEGRAM_ADMIN_CHAT_ID`, `TELEGRAM_OPS_CHAT_ID`, `COMMENT_REPLY_CAP_PER_HOUR`, `PRICE_LIST_URL`, and two hashes:
+`scripts/build.js` validates the non-secret values in `.env` (service URLs, Graph API version, WhatsApp sender and template names, Telegram chat ids, attempt and reply caps; see `.env.example`) and bakes them into the workflow JSON. The two shared tokens are configured as hashes:
 
 ```bash
 printf '%s' "$META_VERIFY_TOKEN"   | sha256sum   # META_VERIFY_TOKEN_SHA256
@@ -189,13 +189,13 @@ The defaults are 64 zeros, which match no token, so verification fails closed un
 
 ### n8n environment
 
-| Variable                       | Value                                                                                             |
-| ------------------------------ | ------------------------------------------------------------------------------------------------- |
-| `N8N_ENCRYPTION_KEY`           | Long random string; encrypts the stored credentials                                               |
-| `WEBHOOK_URL`                  | Public HTTPS base URL that Meta and Telegram can reach (behind a reverse proxy or tunnel)         |
-| `GENERIC_TIMEZONE`             | `Asia/Jakarta` in the compose file                                                                |
-| `N8N_BLOCK_ENV_ACCESS_IN_NODE` | Leave at the n8n 2.x default (`true`). The workflows never read `$env`.                           |
-| `NODE_FUNCTION_ALLOW_BUILTIN`  | Not needed. The HMAC is computed by the built-in Crypto node, and the Code nodes load no modules. |
+| Variable             | Value                                                                                     |
+| -------------------- | ----------------------------------------------------------------------------------------- |
+| `N8N_ENCRYPTION_KEY` | Long random string; encrypts the stored credentials                                       |
+| `WEBHOOK_URL`        | Public HTTPS base URL that Meta and Telegram can reach (behind a reverse proxy or tunnel) |
+| `GENERIC_TIMEZONE`   | `Asia/Jakarta` in the compose file                                                        |
+
+Leave `N8N_BLOCK_ENV_ACCESS_IN_NODE` at its default (`true`) and `NODE_FUNCTION_ALLOW_BUILTIN` unset: the workflows never read `$env`, and the Code nodes load no modules.
 
 ### Connect the channels
 
@@ -216,22 +216,11 @@ npm run build:check && npm run validate
 TEST_MYSQL_URL=mysql://user:pass@127.0.0.1:3306/inbox_automation_test npm test
 ```
 
-`npm test` runs 83 tests with `node:test`: normalisers against fixtures shaped like the official WhatsApp Cloud API, Instagram and Telegram Bot API payloads, signature checks, decision mapping, comment rules, outbox planning, the validator against deliberately broken workflows, and the built Code nodes executed outside n8n with stand-in globals. With `TEST_MYSQL_URL` set it also applies the schema and runs the workflow SQL against a real database (MariaDB 10.11 in CI); without it those tests are skipped.
+`npm test` runs 89 tests with `node:test`: normalisers against fixtures shaped like the official WhatsApp Cloud API, Instagram and Telegram Bot API payloads, signature checks, decision mapping, comment rules, outbox planning, the validator against deliberately broken workflows, and the built Code nodes executed outside n8n with stand-in globals. With `TEST_MYSQL_URL` set it also applies the schema and runs the workflow SQL against a real database (MariaDB 10.11 in CI); without it those tests are skipped.
 
 ### End-to-end (optional, not in CI)
 
-`scripts/e2e.js` builds the workflows against local mock servers for ai-support-service, the WhatsApp and Instagram APIs, the Telegram Bot API and hr-payroll-api; imports and publishes them into a throwaway n8n (SQLite, temporary user folder); and checks:
-
-- the GET verification handshake with the right and a wrong verify token,
-- a signed WhatsApp message answered through the AI service, with the exact request and reply payloads and the `message_log` row,
-- Meta acknowledged in under 2 s while the AI call takes 4 s,
-- a wrongly signed and an unsigned request rejected with `401` and not processed,
-- a duplicate delivery not answered twice, status callbacks dropped,
-- escalation: holding message to the customer plus admin group alert,
-- Telegram with and without the secret token, an Instagram DM,
-- comment rules including the hourly cap,
-- a failing AI call retried three times, then the error workflow alert,
-- two payroll runs: only delivered and terminal ids acknowledged, the failed event retried, an event claimed by another run left alone, nothing sent twice.
+`scripts/e2e.js` builds the workflows against local mock servers for ai-support-service, the WhatsApp and Instagram APIs, the Telegram Bot API and hr-payroll-api, imports and publishes them into a throwaway n8n (SQLite, temporary user folder), and checks what each mock received and what ended up in MySQL: the verify-token handshake; signed, wrongly signed and unsigned Meta requests; Meta answered in under 2 s while the AI call takes 4 s; duplicate deliveries and status callbacks; escalation with customer text that Telegram would reject unescaped; Telegram with and without the secret token; an Instagram DM; comment rules and the hourly cap; AI retries ending in the error workflow alert; and two payroll runs (acknowledgements, retry, give-up, an event claimed by another run, nothing sent twice).
 
 ```bash
 N8N_BIN=/path/to/node_modules/.bin/n8n \
