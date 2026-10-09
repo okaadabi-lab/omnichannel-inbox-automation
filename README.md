@@ -111,7 +111,7 @@ Every normaliser returns the same shape, which is all the rest of the pipeline k
 
 Dropped before the AI call: WhatsApp delivery and read statuses, reactions and media without text; Instagram echoes of our own messages, reactions, read receipts, edits, deletions and attachment-only messages; Telegram edits, bot senders, group chats (the bot also sits in the admin group) and updates without text.
 
-The request to ai-support-service is the canonical message without `reply_target`. Instagram message ids are often longer than 128 characters, so ai-support-service has to accept `external_message_id` values up to 255 characters.
+The request to ai-support-service is the canonical message without `reply_target`. Instagram message ids can be longer than 128 characters; both ai-support-service and `message_log` accept `external_message_id` values up to 255 characters.
 
 ## Failure handling
 
