@@ -1,0 +1,50 @@
+# Local stack: n8n plus the MySQL database the workflows write to.
+# ai-support-service and hr-payroll-api run separately (see README); the n8n container reaches
+# services on the host through host.docker.internal.
+name: omnichannel-inbox-automation
+
+services:
+  n8n:
+    image: docker.n8n.io/n8nio/n8n:2.42.5
+    restart: unless-stopped
+    ports:
+      - '127.0.0.1:5678:5678'
+    environment:
+      N8N_ENCRYPTION_KEY: ${N8N_ENCRYPTION_KEY:?set N8N_ENCRYPTION_KEY in .env}
+      WEBHOOK_URL: ${N8N_WEBHOOK_URL:-http://localhost:5678/}
+      GENERIC_TIMEZONE: Asia/Jakarta
+      TZ: Asia/Jakarta
+      # The n8n 2.x default, stated explicitly: workflows must not read the container environment.
+      N8N_BLOCK_ENV_ACCESS_IN_NODE: 'true'
+      N8N_DIAGNOSTICS_ENABLED: 'false'
+      EXECUTIONS_DATA_PRUNE: 'true'
+      EXECUTIONS_DATA_MAX_AGE: '336'
+    volumes:
+      - n8n_data:/home/node/.n8n
+      - ./workflows:/opt/workflows:ro
+    extra_hosts:
+      - 'host.docker.internal:host-gateway'
+    depends_on:
+      mysql:
+        condition: service_healthy
+
+  mysql:
+    image: mysql:8.4
+    restart: unless-stopped
+    environment:
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-inbox_automation}
+      MYSQL_USER: ${MYSQL_USER:-inbox}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:?set MYSQL_PASSWORD in .env}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?set MYSQL_ROOT_PASSWORD in .env}
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./sql/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+    healthcheck:
+      test: ['CMD-SHELL', 'mysqladmin ping -h 127.0.0.1 -uroot -p"$$MYSQL_ROOT_PASSWORD" --silent']
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  n8n_data:
+  mysql_data:
