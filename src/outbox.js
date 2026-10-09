@@ -1,7 +1,7 @@
 'use strict';
 
 const { buildWhatsAppTemplate } = require('./senders');
-const { asArray, truncate } = require('./text');
+const { asArray, truncate, escapeTelegramHtml } = require('./text');
 
 const ACK_BATCH_SIZE = 100;
 const PHONE_PATTERN = /^\+?[1-9]\d{7,14}$/;
@@ -86,7 +86,7 @@ function payloadProblem(event, type) {
 
 function renderOpsAlert(event, reason, attempts) {
   const payload = event.payload ?? {};
-  return [
+  const lines = [
     'Payroll notification needs attention',
     `Event: #${event.id} ${event.type}`,
     `Employee: ${payload.employee_name ?? 'unknown'} (id ${payload.employee_id ?? 'unknown'})`,
@@ -94,7 +94,8 @@ function renderOpsAlert(event, reason, attempts) {
     `Reason: ${reason}`,
     `Attempts: ${attempts}`,
     'The event has been acknowledged in hr-payroll-api. Please notify the employee manually.',
-  ].join('\n');
+  ];
+  return escapeTelegramHtml(lines.join('\n'));
 }
 
 function finalOutcome(event, status, reason, attempts, alert) {

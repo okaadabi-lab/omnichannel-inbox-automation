@@ -129,12 +129,32 @@ function startMetaGraph({ whatsappToken, instagramToken, failingPhone }) {
   });
 }
 
+// Telegram rejects text it cannot parse in the requested parse_mode. The workflows never send
+// HTML tags, so any "<" or a bare "&" is an escaping bug; in legacy Markdown an unmatched "_",
+// "*" or "`" opens an entity that never ends.
+function telegramParseError(text, parseMode) {
+  if (parseMode === 'HTML') {
+    return /<|&(?!(lt|gt|amp|quot);)/.test(text);
+  }
+  if (parseMode === 'Markdown') {
+    return ['_', '*', '`'].some((char) => text.split(char).length % 2 === 0);
+  }
+  return false;
+}
+
 // Telegram Bot API: only sendMessage is needed.
 function startTelegram({ botToken }) {
   let messageId = 0;
   return startServer((req, res) => {
     if (req.path !== `/bot${botToken}/sendMessage`) {
       return send(res, 404, { ok: false, description: 'Not Found' });
+    }
+    if (telegramParseError(String(req.body.text ?? ''), req.body.parse_mode)) {
+      return send(res, 400, {
+        ok: false,
+        error_code: 400,
+        description: "Bad Request: can't parse entities",
+      });
     }
     messageId += 1;
     return send(res, 200, {

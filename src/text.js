@@ -68,6 +68,12 @@ function singleLine(text) {
   return text.replace(/\s+/g, ' ').trim();
 }
 
+// Telegram messages are sent with parse_mode HTML, where only these three characters need
+// escaping. Escape after truncating: Telegram counts the length of the parsed text.
+function escapeTelegramHtml(text) {
+  return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
 module.exports = {
   asArray,
   cleanText,
@@ -76,4 +82,5 @@ module.exports = {
   unixToIso,
   toMysqlDateTime,
   singleLine,
+  escapeTelegramHtml,
 };

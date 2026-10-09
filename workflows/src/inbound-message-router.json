@@ -647,7 +647,8 @@
         "chatId": "%%TELEGRAM_ADMIN_CHAT_ID%%",
         "text": "={{ $('Plan Actions').item.json.admin_alert_text }}",
         "additionalFields": {
-          "appendAttribution": false
+          "appendAttribution": false,
+          "parse_mode": "HTML"
         }
       },
       "id": "67056c02-5a1c-4286-acb2-5d48a2104ebb",
@@ -812,7 +813,8 @@
         "chatId": "={{ $('Plan Actions').item.json.send.chat_id }}",
         "text": "={{ $('Plan Actions').item.json.send.text }}",
         "additionalFields": {
-          "appendAttribution": false
+          "appendAttribution": false,
+          "parse_mode": "HTML"
         }
       },
       "id": "7cb838a9-62a0-424e-aad0-02ccbec1d549",

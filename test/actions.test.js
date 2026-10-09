@@ -136,6 +136,18 @@ test('escalate sends the holding message and renders an admin alert', () => {
   );
 });
 
+test('Telegram texts are escaped for HTML parse mode, the log keeps the raw reply', () => {
+  const decision = { ...escalateDecision, reply_text: 'Baik <kak> & terima kasih' };
+  const message = { ...whatsapp, text: 'refund_DP <segera> & cepat' };
+  const plan = planActions(message, decision, { logId: 10, now: NOW });
+  assert.match(plan.admin_alert_text, /refund_DP &lt;segera&gt; &amp; cepat/);
+  assert.match(plan.admin_alert_text, /Holding reply sent: Baik &lt;kak&gt; &amp; terima kasih/);
+  assert.equal(plan.log.reply_text, 'Baik <kak> & terima kasih');
+
+  const onTelegram = planActions(telegram, decision, { logId: 11, now: NOW });
+  assert.equal(onTelegram.send.text, 'Baik &lt;kak&gt; &amp; terima kasih');
+});
+
 test('none sends nothing and logs no_action', () => {
   const plan = planActions(telegram, noneDecision, { logId: 9, now: NOW });
   assert.equal(plan.send, null);

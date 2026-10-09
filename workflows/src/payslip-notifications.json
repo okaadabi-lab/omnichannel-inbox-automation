@@ -369,7 +369,8 @@
         "chatId": "%%TELEGRAM_OPS_CHAT_ID%%",
         "text": "={{ $json.alert_text }}",
         "additionalFields": {
-          "appendAttribution": false
+          "appendAttribution": false,
+          "parse_mode": "HTML"
         }
       },
       "id": "6fa3767d-f89e-46aa-a2b3-e90202e97385",

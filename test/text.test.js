@@ -2,7 +2,13 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { truncate, truncateUtf8, unixToIso, toMysqlDateTime } = require('../src/text');
+const {
+  truncate,
+  truncateUtf8,
+  unixToIso,
+  toMysqlDateTime,
+  escapeTelegramHtml,
+} = require('../src/text');
 
 test('truncate keeps short text and marks cut text with an ellipsis', () => {
   assert.equal(truncate('halo', 10), 'halo');
@@ -36,4 +42,12 @@ test('unixToIso accepts seconds, milliseconds and numeric strings', () => {
 test('toMysqlDateTime renders UTC with milliseconds and rejects invalid dates', () => {
   assert.equal(toMysqlDateTime('2026-10-09T10:00:00.120+07:00'), '2026-10-09 03:00:00.120');
   assert.throws(() => toMysqlDateTime('not a date'), /Invalid date/);
+});
+
+test('escapeTelegramHtml escapes exactly what Telegram HTML parse mode needs', () => {
+  assert.equal(
+    escapeTelegramHtml('a < b && c > d, intent_refund_request *bold*'),
+    'a &lt; b &amp;&amp; c &gt; d, intent_refund_request *bold*',
+  );
+  assert.equal(escapeTelegramHtml('&lt;'), '&amp;lt;');
 });

@@ -89,6 +89,15 @@ test('invalid payloads and phone numbers are undeliverable too', () => {
   assert.match(planOutboxDelivery(noUrl, fresh, options).last_error, /payload incomplete/);
 });
 
+test('ops alerts are escaped for Telegram HTML parse mode', () => {
+  const event = {
+    ...paidEventWithoutPhone,
+    payload: { ...paidEventWithoutPhone.payload, employee_name: 'Citra <HR> & Co' },
+  };
+  const plan = planOutboxDelivery(event, fresh, options);
+  assert.match(plan.alert_text, /Employee: Citra &lt;HR&gt; &amp; Co \(id 3\)/);
+});
+
 test('unknown event types are skipped quietly and acknowledged', () => {
   const plan = planOutboxDelivery({ ...payslipEvent, type: 'employee.created' }, fresh, options);
   assert.equal(plan.action, 'finalize');

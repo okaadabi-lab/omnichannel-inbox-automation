@@ -125,6 +125,12 @@ test('validation enforces retries, timeouts and the error workflow', () => {
     /attribution footer/,
   );
   assert.match(
+    withChange(router, (w) => {
+      delete node(w, 'Alert Admin Group').parameters.additionalFields.parse_mode;
+    }).join('\n'),
+    /"Alert Admin Group" must set parse_mode to HTML/,
+  );
+  assert.match(
     withChange('payslip-notifications.json', (w) => {
       delete w.settings.errorWorkflow;
     }).join('\n'),

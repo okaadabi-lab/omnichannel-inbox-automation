@@ -93,11 +93,14 @@ function checkOutboundNodes(workflow, error) {
     if (node.type === 'n8n-nodes-base.httpRequest' && !(node.parameters.options?.timeout > 0)) {
       error(`"${node.name}" needs an explicit timeout`);
     }
-    if (
-      node.type === 'n8n-nodes-base.telegram' &&
-      node.parameters.additionalFields?.appendAttribution !== false
-    ) {
-      error(`"${node.name}" must disable the n8n attribution footer`);
+    if (node.type === 'n8n-nodes-base.telegram') {
+      const fields = node.parameters.additionalFields ?? {};
+      if (fields.appendAttribution !== false) {
+        error(`"${node.name}" must disable the n8n attribution footer`);
+      }
+      // Without an explicit parse mode the node sends legacy Markdown, and the texts built
+      // in src/ are escaped for HTML.
+      if (fields.parse_mode !== 'HTML') error(`"${node.name}" must set parse_mode to HTML`);
     }
   }
 }

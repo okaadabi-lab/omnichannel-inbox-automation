@@ -26,7 +26,8 @@
         "chatId": "%%TELEGRAM_OPS_CHAT_ID%%",
         "text": "={{ $json.text }}",
         "additionalFields": {
-          "appendAttribution": false
+          "appendAttribution": false,
+          "parse_mode": "HTML"
         }
       },
       "id": "8fecf36b-6740-4d34-aee4-6a2222459fe2",

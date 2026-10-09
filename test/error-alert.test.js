@@ -34,3 +34,11 @@ test('long error messages are truncated so the Telegram alert still fits', () =>
   data.execution.error.message = 'x'.repeat(5000);
   assert.ok(formatErrorAlert(data).length < 4096);
 });
+
+test('HTML error pages from upstream services are escaped for Telegram', () => {
+  const data = loadFixture('error-trigger.json');
+  data.execution.error.message = '502 - "<html><body>Bad Gateway</body></html>"';
+  const text = formatErrorAlert(data);
+  assert.doesNotMatch(text, /</);
+  assert.match(text, /&lt;html&gt;&lt;body&gt;Bad Gateway/);
+});

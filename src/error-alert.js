@@ -1,6 +1,6 @@
 'use strict';
 
-const { truncate } = require('./text');
+const { truncate, escapeTelegramHtml } = require('./text');
 
 const MESSAGE_LIMIT = 1500;
 
@@ -18,7 +18,7 @@ function formatErrorAlert(data) {
   lines.push(`Error: ${message}`);
   if (execution?.retryOf) lines.push(`Retry of execution: ${execution.retryOf}`);
   lines.push(execution?.url ? `Execution: ${execution.url}` : 'Execution: not started');
-  return lines.join('\n');
+  return escapeTelegramHtml(lines.join('\n'));
 }
 
 module.exports = { formatErrorAlert };

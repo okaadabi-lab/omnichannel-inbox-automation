@@ -1,6 +1,6 @@
 'use strict';
 
-const { truncate, truncateUtf8, singleLine } = require('./text');
+const { truncate, truncateUtf8, singleLine, escapeTelegramHtml } = require('./text');
 
 const WHATSAPP_TEXT_LIMIT = 4096;
 const INSTAGRAM_TEXT_BYTES = 1000;
@@ -75,7 +75,10 @@ function buildInstagramPublicReply(text) {
 }
 
 function buildTelegramText(chatId, text) {
-  return { chat_id: String(chatId), text: truncate(requireText(text), TELEGRAM_TEXT_LIMIT) };
+  return {
+    chat_id: String(chatId),
+    text: escapeTelegramHtml(truncate(requireText(text), TELEGRAM_TEXT_LIMIT)),
+  };
 }
 
 // One channel-neutral description of "send this text back to the customer", consumed by the

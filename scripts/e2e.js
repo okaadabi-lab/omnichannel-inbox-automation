@@ -480,12 +480,18 @@ async function testWebhooks({ base, services, connection }) {
 
   // Escalation: holding reply to the customer and an alert in the admin group
   const escalateId = 'wamid.E2E_ESCALATE_0001';
-  await fetch(metaUrl, signed(whatsappPayload(escalateId, 'saya mau refund DP kemarin')));
+  // The underscores in the reason codes and the "<" and "&" from the customer must survive
+  // Telegram's parser, so the mock rejects anything that is not escaped for the parse mode.
+  await fetch(
+    metaUrl,
+    signed(whatsappPayload(escalateId, 'saya mau refund DP kemarin <segera> & cepat ya')),
+  );
   const alert = await waitFor(() => telegramTo(ADMIN_CHAT)[0], 'admin group alert');
+  assert.equal(alert.body.parse_mode, 'HTML');
   assert.match(alert.body.text, /^Customer needs a human/);
   assert.match(alert.body.text, /Intent: refund_request \(confidence 0\.91\)/);
   assert.match(alert.body.text, /Reasons: intent_refund_request/);
-  assert.match(alert.body.text, /saya mau refund DP kemarin/);
+  assert.match(alert.body.text, /saya mau refund DP kemarin &lt;segera&gt; &amp; cepat ya/);
   await waitFor(
     () => graphCalls('/messages').find((r) => r.body.text?.body?.startsWith('Terima kasih, kak.')),
     'holding message to the customer',

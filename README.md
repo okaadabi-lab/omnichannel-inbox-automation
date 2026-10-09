@@ -257,7 +257,7 @@ test/                unit, SQL and built-code tests with fixture payloads
 - **One message per loop iteration.** When an n8n node retries, it re-runs for all its input items. With several messages in one webhook, a failed second reply would resend the first. The Loop Over Items node keeps every send, and every retry, to a single message.
 - **De-duplication in MySQL.** The unique key on `message_log` is visible, queryable and survives an n8n reset, unlike n8n's internal de-duplication store.
 - **MySQL node details.** The MySQL node (v2.3+) turns numeric-looking query parameters into numbers, which corrupts 17-digit Instagram ids, so ids are written through the insert and update operations, and the reply counter uses a string key such as `instagram:<id>`. Query placeholders are used once each in ascending order because the node binds values by placeholder number, not by position. These rules are tested in `test/sql.test.js`.
-- **Plain-text Telegram alerts.** Markdown would need every customer-supplied character escaped; one stray `_` makes the alert fail.
+- **Telegram messages in HTML parse mode.** Without a parse mode the n8n Telegram node sends legacy Markdown, where one stray `_` (in a reason code or a customer's text) makes the send fail. HTML only needs `<`, `>` and `&` escaped, which `src/` does for every Telegram text; the validator rejects a Telegram node without `parse_mode: HTML`.
 
 ## Adding a channel
 
