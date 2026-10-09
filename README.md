@@ -1,5 +1,7 @@
 # omnichannel-inbox-automation
 
+[![CI](https://github.com/__GITHUB_USER__/omnichannel-inbox-automation/actions/workflows/ci.yml/badge.svg)](https://github.com/__GITHUB_USER__/omnichannel-inbox-automation/actions/workflows/ci.yml)
+
 n8n workflows that bring WhatsApp, Instagram and Telegram messages into one pipeline: signature-verified webhooks, normalisation, AI triage through an external service, human escalation, retries and logging.
 
 Portfolio project. All data in this repository is fictional sample data.
@@ -12,7 +14,7 @@ A small service business gets customer messages on three channels and payroll no
 - Workflow JSON is generated from templates, checked by a validator and imported unchanged into n8n.
 - An end-to-end harness runs the built workflows in a real n8n instance against mock services.
 
-The workflows call two companion portfolio services over HTTP: ai-support-service (decides whether to reply, escalate or stay silent) and hr-payroll-api (publishes payroll events through an outbox).
+The workflows call two companion portfolio services over HTTP: [ai-support-service](https://github.com/__GITHUB_USER__/ai-support-service) (decides whether to reply, escalate or stay silent) and [hr-payroll-api](https://github.com/__GITHUB_USER__/hr-payroll-api) (publishes payroll events through an outbox).
 
 ![inbound-message-router in the n8n editor](docs/images/inbound-message-router.png)
 
