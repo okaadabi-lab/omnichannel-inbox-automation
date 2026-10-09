@@ -1,0 +1,10 @@
+{
+  "update_id": 900000003,
+  "message": {
+    "message_id": 7,
+    "from": { "id": 700000009, "is_bot": false, "first_name": "Sari" },
+    "chat": { "id": -1001000000001, "title": "Inbox Escalations", "type": "supergroup" },
+    "date": 1791540500,
+    "text": "Saya ambil percakapan ini."
+  }
+}

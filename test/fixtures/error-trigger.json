@@ -1,0 +1,15 @@
+{
+  "execution": {
+    "id": "231",
+    "url": "https://n8n.example.com/workflow/oiaInboundRouter/executions/231",
+    "retryOf": null,
+    "error": {
+      "message": "The service was not able to process your request",
+      "description": "connect ECONNREFUSED 10.0.0.12:8083",
+      "node": { "name": "Ask AI Support" }
+    },
+    "lastNodeExecuted": "Ask AI Support",
+    "mode": "webhook"
+  },
+  "workflow": { "id": "oiaInboundRouter", "name": "inbound-message-router" }
+}

@@ -1,0 +1,11 @@
+{
+  "update_id": 900000002,
+  "edited_message": {
+    "message_id": 42,
+    "from": { "id": 700000001, "is_bot": false, "first_name": "Bayu" },
+    "chat": { "id": 700000001, "first_name": "Bayu", "type": "private" },
+    "date": 1791540400,
+    "edit_date": 1791540460,
+    "text": "Selamat siang, tanggal 21 Desember masih tersedia?"
+  }
+}

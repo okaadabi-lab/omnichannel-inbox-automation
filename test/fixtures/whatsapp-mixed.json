@@ -1,0 +1,76 @@
+{
+  "object": "whatsapp_business_account",
+  "entry": [
+    {
+      "id": "100000000000001",
+      "changes": [
+        {
+          "value": {
+            "messaging_product": "whatsapp",
+            "metadata": {
+              "display_phone_number": "6281100000000",
+              "phone_number_id": "200000000000001"
+            },
+            "contacts": [
+              { "profile": { "name": "Rina Wulandari" }, "wa_id": "6281200000001" },
+              { "profile": { "name": "Agus Setiawan" }, "wa_id": "6281200000002" }
+            ],
+            "messages": [
+              {
+                "from": "6281200000001",
+                "id": "wamid.REACTION0000000000000000000000001",
+                "timestamp": "1791540010",
+                "type": "reaction",
+                "reaction": {
+                  "message_id": "wamid.OUTBOUND000000000000000000000001",
+                  "emoji": "👍"
+                }
+              },
+              {
+                "from": "6281200000002",
+                "id": "wamid.IMAGE0000000000000000000000000001",
+                "timestamp": "1791540020",
+                "type": "image",
+                "image": {
+                  "mime_type": "image/jpeg",
+                  "sha256": "c2FtcGxlLWltYWdlLWhhc2g=",
+                  "id": "300000000000001"
+                }
+              },
+              {
+                "from": "6281200000002",
+                "id": "wamid.IMAGE0000000000000000000000000002",
+                "timestamp": "1791540030",
+                "type": "image",
+                "image": {
+                  "caption": "Dekorasi seperti ini bisa?",
+                  "mime_type": "image/jpeg",
+                  "sha256": "c2FtcGxlLWltYWdlLWhhc2gy",
+                  "id": "300000000000002"
+                }
+              },
+              {
+                "from": "6281200000002",
+                "id": "wamid.INTERACTIVE000000000000000000000001",
+                "timestamp": "1791540040",
+                "type": "interactive",
+                "interactive": {
+                  "type": "button_reply",
+                  "button_reply": { "id": "book_survey", "title": "Jadwalkan survei" }
+                }
+              },
+              {
+                "from": "6281200000002",
+                "id": "wamid.UNSUPPORTED000000000000000000001",
+                "timestamp": "1791540050",
+                "type": "unsupported",
+                "errors": [{ "code": 131051, "title": "Message type unknown" }]
+              }
+            ]
+          },
+          "field": "messages"
+        }
+      ]
+    }
+  ]
+}

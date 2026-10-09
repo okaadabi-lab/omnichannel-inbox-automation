@@ -1,0 +1,30 @@
+{
+  "object": "whatsapp_business_account",
+  "entry": [
+    {
+      "id": "100000000000001",
+      "changes": [
+        {
+          "value": {
+            "messaging_product": "whatsapp",
+            "metadata": {
+              "display_phone_number": "6281100000000",
+              "phone_number_id": "200000000000001"
+            },
+            "contacts": [{ "profile": { "name": "Rina Wulandari" }, "wa_id": "6281200000001" }],
+            "messages": [
+              {
+                "from": "6281200000001",
+                "id": "wamid.HBgNNjI4MTIwMDAwMDAwMRUCABIYFjNFQjBDMUQyRTNGNDA1MTYyNzM4NDkA",
+                "timestamp": "1791540000",
+                "text": { "body": "kak brp harga paket anggrek?" },
+                "type": "text"
+              }
+            ]
+          },
+          "field": "messages"
+        }
+      ]
+    }
+  ]
+}
